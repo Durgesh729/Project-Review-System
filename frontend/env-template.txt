@@ -1,0 +1,4 @@
+# Copy this to .env file in the frontend directory
+
+VITE_SUPABASE_URL=https://lylifxrrvrhzwmiirxnm.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bGlmeHJydnJoenhtaWlyeG5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzUyNzQwNzcsImV4cCI6MjA1MDg1MDA3N30.8qWJjQwQzQwQzQwQzQwQzQwQzQwQzQwQzQwQzQ

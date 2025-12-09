@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Storage Bucket</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        .warning { color: orange; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Supabase Storage Bucket Setup</h1>
+        <p>This will create the 'submissions' storage bucket needed for file uploads.</p>
+        
+        <button onclick="createStorageBucket()">Create Submissions Bucket</button>
+        <button onclick="listBuckets()">List All Buckets</button>
+        <button onclick="testBucketAccess()">Test Bucket Access</button>
+        <button onclick="clearLog()">Clear Log</button>
+
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        const supabaseUrl = 'https://lylifxrrvrhzwmiirxnm.supabase.co'
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5bGlmeHJydnJoenhtaWlyeG5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzUyNzQwNzcsImV4cCI6MjA1MDg1MDA3N30.8qWJjQwQzQwQzQwQzQwQzQwQzQwQzQwQzQwQzQ'
+        
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey)
+        
+        function log(message, type = 'info') {
+            const logElement = document.getElementById('log')
+            const timestamp = new Date().toLocaleTimeString()
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'info'
+            logElement.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`
+            logElement.scrollTop = logElement.scrollHeight
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = ''
+        }
+        
+        async function createStorageBucket() {
+            log('🪣 Creating submissions storage bucket...', 'info')
+            
+            try {
+                // Note: Creating buckets requires admin privileges
+                // This might fail if the anon key doesn't have admin access
+                const { data, error } = await supabase.storage.createBucket('submissions', {
+                    public: false,
+                    allowedMimeTypes: [
+                        'application/pdf',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'application/vnd.ms-powerpoint',
+                        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                        'video/mp4',
+                        'video/x-msvideo',
+                        'text/plain',
+                        'application/octet-stream'
+                    ],
+                    fileSizeLimit: 50 * 1024 * 1024 // 50MB limit
+                })
+                
+                if (error) {
+                    if (error.message.includes('already exists')) {
+                        log('✅ Submissions bucket already exists', 'success')
+                    } else if (error.message.includes('permission') || error.message.includes('admin')) {
+                        log('⚠️ Cannot create bucket - requires admin access', 'warning')
+                        log('💡 You need to create the bucket manually in Supabase Dashboard:', 'info')
+                        log('   1. Go to Storage in your Supabase dashboard', 'info')
+                        log('   2. Click "Create a new bucket"', 'info')
+                        log('   3. Name it "submissions"', 'info')
+                        log('   4. Set it to private (not public)', 'info')
+                        log('   5. Set appropriate file size limits', 'info')
+                    } else {
+                        log(`❌ Error creating bucket: ${error.message}`, 'error')
+                    }
+                } else {
+                    log('✅ Successfully created submissions bucket', 'success')
+                }
+            } catch (err) {
+                log(`❌ Unexpected error: ${err.message}`, 'error')
+            }
+        }
+        
+        async function listBuckets() {
+            log('📋 Listing all storage buckets...', 'info')
+            
+            try {
+                const { data, error } = await supabase.storage.listBuckets()
+                
+                if (error) {
+                    log(`❌ Error listing buckets: ${error.message}`, 'error')
+                } else {
+                    if (data && data.length > 0) {
+                        log('📦 Available buckets:', 'success')
+                        data.forEach(bucket => {
+                            log(`   • ${bucket.name} (${bucket.public ? 'public' : 'private'})`, 'info')
+                        })
+                    } else {
+                        log('📦 No buckets found', 'info')
+                    }
+                }
+            } catch (err) {
+                log(`❌ Unexpected error: ${err.message}`, 'error')
+            }
+        }
+        
+        async function testBucketAccess() {
+            log('🧪 Testing submissions bucket access...', 'info')
+            
+            try {
+                // Try to list files in the submissions bucket
+                const { data, error } = await supabase.storage
+                    .from('submissions')
+                    .list('', { limit: 1 })
+                
+                if (error) {
+                    if (error.message.includes('not found')) {
+                        log('❌ Submissions bucket does not exist', 'error')
+                        log('💡 Run "Create Submissions Bucket" first', 'info')
+                    } else {
+                        log(`❌ Error accessing bucket: ${error.message}`, 'error')
+                    }
+                } else {
+                    log('✅ Submissions bucket is accessible', 'success')
+                    log(`📁 Bucket contains ${data ? data.length : 0} items`, 'info')
+                }
+            } catch (err) {
+                log(`❌ Unexpected error: ${err.message}`, 'error')
+            }
+        }
+        
+        // Auto-run on page load
+        window.onload = function() {
+            log('Storage Bucket Setup Page Loaded', 'success')
+            log('Click the buttons above to create and test the storage bucket', 'info')
+        }
+    </script>
+</body>
+</html>

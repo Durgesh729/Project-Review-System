@@ -1,0 +1,17 @@
+backend/.env
+# Test files
+test-*.html
+test-*.js
+*-test.html
+*-test.js
+create-test-*.html
+create-test-*.js
+*_test.html
+*_test.js
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
