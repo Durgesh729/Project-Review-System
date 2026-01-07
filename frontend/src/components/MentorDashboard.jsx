@@ -841,34 +841,11 @@ const MentorDashboard = () => {
 
           {/* Role Switching & Become Actions Block */}
           <div className="flex flex-col gap-2 w-full mb-4">
+            {/* Only show RoleSwitcher if user has multiple roles (handled internally, but explicit here for clarity) */}
             <RoleSwitcher className="block w-full" />
 
-            <div className="relative">
-              <button
-                onClick={() => setShowBecomeMenu(!showBecomeMenu)}
-                className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-                style={{ borderRadius: '0.375rem' }}
-              >
-                Become
-              </button>
-
-              {showBecomeMenu && (
-                <div className="absolute right-0 bottom-full mb-2 w-48 bg-slate-800 rounded-md shadow-lg py-1 z-10 border border-slate-700">
-                  <button
-                    onClick={() => handleBecomeRole('hod')}
-                    className="block w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-slate-700"
-                  >
-                    Become a HOD
-                  </button>
-                  <button
-                    onClick={() => handleBecomeRole('project_coordinator')}
-                    className="block w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-slate-700"
-                  >
-                    Become a Coordinator
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Become button removed to strictly enforce single-role rule for Mentors */}
+            {/* Become button removed to strictly enforce single-role rule for Mentors */}
           </div>
 
           <button

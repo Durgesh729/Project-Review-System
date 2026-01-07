@@ -152,7 +152,7 @@ function RoleSelection() {
                       checked={selectedRoles.includes('project_coordinator')}
                       onChange={() => handleCheckboxChange('project_coordinator')}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      disabled={userProfile.role === 'project_coordinator'} // Mandatory if primary
+                      disabled={userProfile.role === 'project_coordinator'} // Keep primary mandatory
                     />
                     <div className="ml-3">
                       <span className="font-medium block">Project Coordinator</span>
@@ -166,7 +166,7 @@ function RoleSelection() {
                       checked={selectedRoles.includes('hod')}
                       onChange={() => handleCheckboxChange('hod')}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      disabled={userProfile.role === 'hod'} // Mandatory if primary
+                      disabled={userProfile.role === 'hod'} // Keep primary mandatory
                     />
                     <div className="ml-3">
                       <span className="font-medium block">HOD</span>

@@ -97,8 +97,8 @@ export function AuthProvider({ children }) {
                 id: session.user.id,
                 email: session.user.email,
                 name: session.user.user_metadata?.name || session.user.email.split('@')[0],
-                role: null,
-                roles: [],
+                role: session.user.user_metadata?.role || 'mentee',
+                roles: [session.user.user_metadata?.role || 'mentee'],
                 isVerified: true,
               })
               .select()
