@@ -3,6 +3,7 @@ import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { AcademicYearProvider } from './contexts/AcademicYearContext';
 import { OfflineSyncProvider } from './contexts/OfflineSyncContext';
+import { Toaster } from 'react-hot-toast';
 import Banner from './components/Banner';
 import Footer from './components/Footer';
 import Features from './components/Features';
@@ -18,6 +19,9 @@ import ReviewPage from './components/ReviewPage';
 import ProjectDetails from './components/ProjectDetails';
 import About from './components/About';
 import Contact from './components/Contact';
+import PrivacyPolicy from './components/PrivacyPolicy';
+import TermsOfService from './components/TermsOfService';
+import CookiePolicy from './components/CookiePolicy';
 import AuthCallback from './components/AuthCallback';
 import RoleSelection from './components/RoleSelection';
 import EmailVerification from './components/EmailVerification';
@@ -28,6 +32,7 @@ function App() {
   return (
     <AuthProvider>
       <OfflineSyncProvider>
+        <Toaster position="top-right" reverseOrder={false} />
         <Router>
           <AcademicYearProvider>
             <Navbar />
@@ -38,6 +43,9 @@ function App() {
               <Route path="/projects/:id/review" element={<ReviewPage />} />
               <Route path="/about" element={<About />} />
               <Route path="/contact" element={<Contact />} />
+              <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/terms-of-service" element={<TermsOfService />} />
+              <Route path="/cookie-policy" element={<CookiePolicy />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/login" element={<Login />} />
               <Route path="/auth/callback" element={<AuthCallback />} />

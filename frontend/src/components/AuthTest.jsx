@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 
 function AuthTest() {
   const [testResults, setTestResults] = useState([]);
@@ -7,7 +8,7 @@ function AuthTest() {
   const { signUp, signIn, signInWithGoogle, signOut, user, userProfile, isAuthenticated } = useAuth();
 
   const addResult = (test, status, message) => {
-    setTestResults(prev => [...prev, { test, status, message, timestamp: new Date().toLocaleTimeString() }]);
+    setTestResults(prev => [...prev, { test, status, message, timestamp: formatDateDDMMYYYY(new Date()) }]);
   };
 
   const runTests = async () => {
@@ -113,7 +114,7 @@ function AuthTest() {
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-lg shadow-lg p-6">
           <h1 className="text-2xl font-bold text-gray-800 mb-6">Authentication System Test</h1>
-          
+
           {/* Current Auth Status */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <h2 className="text-lg font-semibold mb-2">Current Status</h2>

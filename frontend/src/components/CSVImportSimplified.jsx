@@ -56,7 +56,8 @@ const CSVImportSimplified = ({ onImportComplete, coordinatorId }) => {
       const menteeProfiles = new Map();
       Object.keys(map).forEach((email) => {
         const p = map[email];
-        const prof = { id: p.id, email: p.email, name: p.name };
+        // Ensure we handle both name (from edge function) and full_name (from DB)
+        const prof = { id: p.id, email: p.email, name: p.name || p.full_name };
         if (roleTag.has(`mentor:${email.toLowerCase()}`)) mentorProfiles.set(email.toLowerCase(), prof);
         if (roleTag.has(`mentee:${email.toLowerCase()}`)) menteeProfiles.set(email.toLowerCase(), prof);
       });
@@ -282,27 +283,28 @@ const CSVImportSimplified = ({ onImportComplete, coordinatorId }) => {
         if (!mentorProfile) {
           const { data: foundMentor, error: mentorFetchError } = await supabase
             .from('users')
-            .select('id, name, email')
+            .select('id, full_name, email')
             .eq('email', mentorEmail)
             .maybeSingle();
 
           if (mentorFetchError) throw new Error(`Failed to lookup mentor: ${mentorFetchError.message}`);
 
           if (foundMentor) {
-            mentorProfile = foundMentor;
+            // Map full_name to name for internal consistency
+            mentorProfile = { ...foundMentor, name: foundMentor.full_name };
           } else {
             const fallbackName = mentorName || mentorEmail.split('@')[0];
             const { data: createdMentor, error: createMentorError } = await supabase
               .from('users')
-              .insert({ name: fallbackName, email: mentorEmail, role: 'mentor' })
-              .select('id, name, email')
+              .insert({ full_name: fallbackName, email: mentorEmail, role: 'mentor' })
+              .select('id, full_name, email')
               .single();
 
             if (createMentorError) {
               results.warnings.push(`Row ${rowNum}: Mentor not found and could not be created. Proceeding without mentor_id.`);
               mentorProfile = null;
             } else {
-              mentorProfile = createdMentor;
+              mentorProfile = { ...createdMentor, name: createdMentor.full_name };
               results.createdMentors.push(createdMentor);
             }
           }
@@ -316,27 +318,27 @@ const CSVImportSimplified = ({ onImportComplete, coordinatorId }) => {
           if (!menteeProfile) {
             const { data: foundMentee, error: menteeFetchError } = await supabase
               .from('users')
-              .select('id, name, email')
+              .select('id, full_name, email')
               .eq('email', menteeEmail)
               .maybeSingle();
 
             if (menteeFetchError) throw new Error(`Failed to lookup mentee: ${menteeFetchError.message}`);
 
             if (foundMentee) {
-              menteeProfile = foundMentee;
+              menteeProfile = { ...foundMentee, name: foundMentee.full_name };
             } else {
               const fallbackName = menteeName || menteeEmail.split('@')[0];
               const { data: createdMentee, error: createMenteeError } = await supabase
                 .from('users')
-                .insert({ name: fallbackName, email: menteeEmail, role: 'mentee' })
-                .select('id, name, email')
+                .insert({ full_name: fallbackName, email: menteeEmail, role: 'mentee' })
+                .select('id, full_name, email')
                 .single();
 
               if (createMenteeError) {
                 results.warnings.push(`Row ${rowNum}: Mentee not found and could not be created. Imported project without mentee.`);
                 menteeProfile = null;
               } else {
-                menteeProfile = createdMentee;
+                menteeProfile = { ...createdMentee, name: createdMentee.full_name };
                 results.createdMentees.push(createdMentee);
               }
             }
@@ -344,20 +346,50 @@ const CSVImportSimplified = ({ onImportComplete, coordinatorId }) => {
           }
         }
 
+        // Determine status
+        const isMentorVerified = mentorProfile?.is_verified || false;
+        const isMenteeVerified = menteeProfile?.is_verified || false;
+        const projectStatus = (isMentorVerified && isMenteeVerified) ? 'in_progress' : 'draft';
+
         // 3) ALWAYS Create New Project
         // We do NOT check for existing logic. We simply insert.
         const menteesArray = menteeProfile ? [menteeProfile.id] : [];
         const { data: newProject, error: createProjectError } = await supabase
           .from('projects')
           .insert({
+            title: projectName,
             project_name: projectName,
-            project_details: row.projectDetails,
+            description: row.projectDetails,
             mentor_id: mentorProfile?.id || null,
             mentor_email: mentorEmail,
             mentees: menteesArray,
-            mentees: menteesArray,
+            created_by: coordinatorId,
             assigned_by: coordinatorId,
-            duration_months: durationMonths
+            deadline: new Date(new Date().setMonth(new Date().getMonth() + durationMonths)).toISOString(),
+            duration_months: durationMonths,
+            status: projectStatus,
+            team_members: menteesArray.map(id => ({ user_id: id, role: 'mentee' })),
+            assigned_at: new Date().toISOString(),
+            assigned_semester: (() => {
+              // Try explicit column first
+              const explicit = row.assignedSemester || row['Assigned Semester'];
+              if (explicit) return parseInt(explicit, 10);
+
+              // Fallback: Check if Duration column has "Semester X" info
+              // User requirement: "csv already have column name duration that conatin semester"
+              // e.g. "Semester 2" or "2 Semester"
+              if (typeof row.durationRaw === 'string') {
+                const match = row.durationRaw.match(/Semester\s*(\d+)/i);
+                if (match && match[1]) {
+                  return parseInt(match[1], 10);
+                }
+                const matchReverse = row.durationRaw.match(/(\d+)\s*Semester/i);
+                if (matchReverse && matchReverse[1]) {
+                  return parseInt(matchReverse[1], 10);
+                }
+              }
+              return 1; // Default fallback
+            })()
           })
           .select()
           .single();
@@ -370,12 +402,7 @@ const CSVImportSimplified = ({ onImportComplete, coordinatorId }) => {
           .from('project_assignments')
           .insert({
             project_id: newProject.id,
-            project_name: projectName,
             mentor_id: mentorProfile?.id || null,
-            mentor_name: mentorName || mentorProfile?.name || null,
-            mentor_email: mentorEmail,
-            created_by: coordinatorId,
-            status: row.projectStatus
           })
           .select()
           .single();

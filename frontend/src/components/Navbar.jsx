@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import RoleSwitcher from './RoleSwitcher';
+import { FaCog, FaSun, FaMoon, FaTrash, FaSignOutAlt, FaUser } from 'react-icons/fa';
 
 const Navbar = () => {
   // .1 - Hooks setup
@@ -10,6 +11,10 @@ const Navbar = () => {
   const location = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('theme') === 'dark';
+  });
   const { user, userProfile, activeRole, isAuthenticated, signOut } = useAuth();
 
   // .2 - Scroll effect for navbar styling
@@ -20,6 +25,18 @@ const Navbar = () => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // .2.1 - Click outside handler for settings menu
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showSettingsMenu && !event.target.closest('.settings-menu-container')) {
+        setShowSettingsMenu(false);
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showSettingsMenu]);
 
   useEffect(() => {
     if (userProfile) {
@@ -77,6 +94,61 @@ const Navbar = () => {
       console.error('Logout error:', error);
       navigate('/');
     }
+  };
+
+  // .3.3 - Theme toggle handler
+  const handleThemeToggle = () => {
+    setDarkMode(!darkMode);
+    if (!darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+    setShowSettingsMenu(false);
+  };
+
+  // .3.4 - Delete account handler
+  const handleDeleteAccount = async () => {
+    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data.')) {
+      try {
+        // Get current session
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (!session) {
+          throw new Error('No active session found');
+        }
+
+        // Call edge function for complete account deletion
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/complete-account-deletion`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to delete account');
+        }
+
+        // Clear all local data and logout
+        localStorage.clear();
+        sessionStorage.clear();
+        await supabase.auth.signOut();
+
+        // Redirect to login page
+        window.location.href = '/login';
+
+      } catch (error) {
+        console.error('Error deleting account:', error);
+        alert(`Failed to delete account: ${error.message}`);
+      }
+    }
+    setShowSettingsMenu(false);
   };
 
   // .4 - Return UI
@@ -137,10 +209,12 @@ const Navbar = () => {
                 <div className="flex items-center space-x-3">
                   {/* User Profile Info */}
                   <div className="hidden md:flex flex-col items-end">
-                    <span className="text-sm font-medium text-gray-700">{userProfile.name}</span>
-                    <span className="text-xs text-gray-500 capitalize">
+                    <span className="text-sm font-bold text-gray-800 max-w-[150px] truncate text-right" title={userProfile.full_name || userProfile.name}>
+                      {userProfile.full_name || userProfile.name || 'User'}
+                    </span>
+                    <span className="text-xs text-purple-600 font-medium capitalize bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100">
                       {activeRole || userProfile.role}
-                      {userProfile.roles && userProfile.roles.length > 1 ? ` (${userProfile.roles.length} roles)` : ''}
+                      {userProfile.roles && userProfile.roles.length > 1 ? ` (${userProfile.roles.length})` : ''}
                     </span>
                   </div>
 
@@ -148,20 +222,22 @@ const Navbar = () => {
                   <RoleSwitcher />
 
                   {/* User Avatar */}
-                  <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">
-                      {userProfile.name?.charAt(0)?.toUpperCase() || 'U'}
-                    </span>
+                  <div className="relative group cursor-pointer">
+                    <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-full flex items-center justify-center ring-2 ring-offset-2 ring-purple-100 shadow-lg transform transition-all duration-300 group-hover:scale-105 group-hover:shadow-indigo-500/25">
+                      <FaUser className="text-white text-lg drop-shadow-sm" />
+                    </div>
                   </div>
 
-                  {/* Logout Button */}
+                  {/* Logout Button (Replaces Settings) */}
                   <button
                     onClick={handleLogout}
-                    className="px-4 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all duration-300 text-sm font-medium"
+                    className="flex items-center space-x-2 px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-lg transition-all duration-300 text-sm font-medium"
                     title="Logout"
                   >
+                    <FaSignOutAlt className="mr-2" />
                     Logout
                   </button>
+
                 </div>
               ) : (
                 /* Show Login/Signup when not authenticated */

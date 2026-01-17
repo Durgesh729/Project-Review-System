@@ -10,7 +10,7 @@ export const useReviews = () => {
     const fetchReviews = async () => {
       try {
         setLoading(true)
-        
+
         // Try with join first
         const { data: joinedData, error: joinedError } = await supabase
           .from('reviews')
@@ -18,13 +18,13 @@ export const useReviews = () => {
             rating,
             comment,
             created_at,
-            users!inner(name, email)
+            users!inner(full_name, email)
           `)
           .order('created_at', { ascending: false })
 
         if (joinedError) {
           console.log('Join query failed in useReviews, trying separate queries:', joinedError)
-          
+
           // Fallback: fetch reviews without join
           const { data: simpleData, error: simpleError } = await supabase
             .from('reviews')

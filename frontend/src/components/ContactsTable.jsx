@@ -1,5 +1,6 @@
 import React from 'react'
 import { useContacts } from '../hooks/useContacts'
+import { formatDateDDMMYYYY } from '../utils/dateUtils'
 
 const ContactsTable = () => {
   const { contacts, loading, error } = useContacts()
@@ -19,7 +20,7 @@ const ContactsTable = () => {
               <p className="mt-2">{contact.message}</p>
               <div className="card-actions justify-end">
                 <span className="text-xs text-gray-500">
-                  {new Date(contact.created_at).toLocaleDateString()}
+                  {formatDateDDMMYYYY(contact.created_at)}
                 </span>
               </div>
             </div>

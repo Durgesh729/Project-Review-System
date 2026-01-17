@@ -12,6 +12,8 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
     mentorEmail: '',
     deadline: '',
     githubRepo: '',
+    demoLink: '',
+    duration: '2 Semesters',
     teamMembers: [],
   });
 
@@ -71,7 +73,7 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
       let mentorData;
       const { data: existingMentor, error: mentorError } = await supabase
         .from('users')
-        .select('id, email, name, role')
+        .select('id, email, full_name, role')
         .eq('email', formData.mentorEmail.trim())
         .single();
 
@@ -80,10 +82,10 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
         const { data: newMentor, error: createError } = await supabase
           .from('users')
           .insert({
-            name: formData.mentorName.trim(),
+            full_name: formData.mentorName.trim(),
             email: formData.mentorEmail.trim(),
             role: 'mentor',
-            isVerified: true
+            is_verified: true
           })
           .select()
           .single();
@@ -107,10 +109,12 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
         description: formData.description.trim(),
         deadline: formData.deadline || null,
         github_repo: formData.githubRepo.trim() || null,
+        demo_link: formData.demoLink.trim() || null,
         mentor_id: mentorData.id,
         mentor_email: mentorData.email,
         created_by: user.id,
         status: 'active',
+        duration_months: formData.duration === '1 Semester' ? 6 : (formData.duration === '2 Semesters' ? 12 : (formData.duration === '3 Semesters' ? 18 : 24)),
         created_at: new Date().toISOString(),
       };
 
@@ -122,11 +126,11 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
         .select(`
           *,
           creator:created_by (
-            name,
+            full_name,
             email
           ),
           mentor:mentor_id (
-            name,
+            full_name,
             email
           )
         `)
@@ -143,7 +147,7 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
           throw projectError;
         }
       }
-      
+
       if (!projectData) {
         throw new Error('Failed to create project. Please try again.');
       }
@@ -154,14 +158,14 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
       if (formData.teamMembers.length > 0) {
         console.log('Processing team members:', formData.teamMembers);
         const errors = [];
-        
+
         // Process team members one by one to handle errors individually
         for (const member of formData.teamMembers) {
           if (!member.email || !member.name) {
             console.warn('Skipping team member: missing email or name');
             continue;
           }
-          
+
           try {
             // 1. Check if user exists
             const { data: existingUser } = await supabase
@@ -169,27 +173,27 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
               .select('id')
               .eq('email', member.email.trim())
               .single();
-              
+
             let userId = existingUser?.id;
-            
+
             // 2. If user doesn't exist, create them
             if (!userId) {
               console.log(`Creating new user for team member: ${member.email}`);
               const { data: newUser, error: createError } = await supabase
                 .from('users')
                 .insert({
-                  name: member.name.trim(),
+                  full_name: member.name.trim(),
                   email: member.email.trim(),
                   role: 'mentee',
                   is_verified: true
                 })
                 .select('id')
                 .single();
-                
+
               if (createError) throw createError;
               userId = newUser.id;
             }
-            
+
             // 3. Add user to project_team_members
             const { error: teamError } = await supabase
               .from('project_team_members')
@@ -197,19 +201,19 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
                 project_id: projectData.id,
                 user_id: userId,
                 email: member.email.trim(),
-                role_in_project: member.role || 'member'
+                role: member.role || 'member'
               });
-              
+
             if (teamError) throw teamError;
-            
+
             console.log(`Added team member: ${member.email} (${member.role})`);
-            
+
           } catch (error) {
             console.error(`Error adding team member ${member.email}:`, error);
             errors.push(`Failed to add ${member.email}: ${error.message}`);
           }
         }
-        
+
         // Show warning if any team members couldn't be added
         if (errors.length > 0) {
           setMessage({
@@ -231,6 +235,7 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
           mentorEmail: '',
           deadline: '',
           githubRepo: '',
+          demoLink: '',
           teamMembers: [],
         });
       }, 1000);
@@ -247,13 +252,12 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
 
       {message.text && (
         <div
-          className={`mb-4 p-3 rounded text-white ${
-            message.type === 'error'
-              ? 'bg-red-500'
-              : message.type === 'info'
+          className={`mb-4 p-3 rounded text-white ${message.type === 'error'
+            ? 'bg-red-500'
+            : message.type === 'info'
               ? 'bg-blue-500'
               : 'bg-green-500'
-          }`}
+            }`}
         >
           {message.text}
         </div>
@@ -312,6 +316,35 @@ function AddProjectForm({ onProjectCreated, onCancel }) {
         onChange={(e) => handleInputChange('githubRepo', e.target.value)}
         className="w-full p-3 mb-4 rounded-md bg-gray-700 text-white"
         placeholder="https://github.com/username/repository"
+      />
+
+      {/* Duration */}
+      <div className="md:col-span-1">
+        <label className="block text-white mb-2">
+          Project Duration *
+        </label>
+        <select
+          value={formData.duration}
+          onChange={(e) => handleInputChange('duration', e.target.value)}
+          className="w-full p-3 mb-4 rounded-md bg-gray-700 text-white"
+          required
+        >
+          <option value="">Select Duration</option>
+          <option value="1 Semester">1 Semester (6 months)</option>
+          <option value="2 Semesters">2 Semesters (12 months)</option>
+          <option value="3 Semesters">3 Semesters (18 months)</option>
+          <option value="4 Semesters">4 Semesters (24 months)</option>
+        </select>
+      </div>
+
+      {/* Demo Link */}
+      <label className="block text-white mb-2">Demo Link (Optional)</label>
+      <input
+        type="url"
+        value={formData.demoLink}
+        onChange={(e) => handleInputChange('demoLink', e.target.value)}
+        className="w-full p-3 mb-4 rounded-md bg-gray-700 text-white"
+        placeholder="https://your-demo-link.com"
       />
 
       {/* Mentor Name */}

@@ -57,6 +57,11 @@ export function AuthProvider({ children }) {
 
           // Try to fetch real profile in background
           fetchUserProfile(session.user.id);
+
+          // Sync email verification status
+          if (session.user.email_confirmed_at) {
+            syncEmailVerification(session.user.id);
+          }
         } else {
           console.log('Auth state change - No user');
           setUser(null);
@@ -74,6 +79,8 @@ export function AuthProvider({ children }) {
   const fetchUserProfile = async (userId, retryCount = 0) => {
     console.log('Fetching user profile for:', userId);
     try {
+
+
       const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -83,71 +90,129 @@ export function AuthProvider({ children }) {
       if (error) {
         console.error('Error fetching user profile:', error);
 
-        // If user profile doesn't exist, try to create it manually
+        // If user profile doesn't exist, create new profile
         if (error.code === 'PGRST116' && retryCount < 2) {
-          console.log(`User profile not found, attempting to create... (attempt ${retryCount + 1})`);
+          console.log(`User profile not found, creating new profile... (attempt ${retryCount + 1})`);
 
           // Get current session to get user info
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            // For new users, default to pending with empty roles
+            // detailed logging for debugging
+            console.log('Session user metadata:', session.user.user_metadata);
+
+            // Use role from metadata if available (set during signup), otherwise default to pending (for Google Auth)
+            // This MUST match the database trigger logic to ensure consistency
+            const metaRole = session.user.user_metadata?.role;
+            const defaultRole = (metaRole && ['mentee', 'mentor', 'project_coordinator', 'hod'].includes(metaRole))
+              ? metaRole
+              : 'pending';
+
+            console.log('Using role for new profile:', defaultRole);
+
             const { data: insertData, error: insertError } = await supabase
               .from('users')
               .insert({
                 id: session.user.id,
                 email: session.user.email,
                 name: session.user.user_metadata?.name || session.user.email.split('@')[0],
-                role: session.user.user_metadata?.role || 'mentee',
-                roles: [session.user.user_metadata?.role || 'mentee'],
-                isVerified: true,
+                role: defaultRole,
+                roles: [defaultRole],
+                is_verified: true, // Assuming email verification handled by Supabase or strictly enforced elsewhere
+                created_at: new Date().toISOString(),
               })
               .select()
               .single();
 
             if (insertError) {
               console.error('Error creating user profile:', insertError);
-              // Don't retry indefinitely - keep the temporary profile
               if (retryCount < 1) {
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 return fetchUserProfile(userId, retryCount + 1);
               }
             } else {
-              console.log('User profile created successfully:', insertData);
+              console.log('New user profile created successfully:', insertData);
               setUserProfile(insertData);
               localStorage.setItem('userProfile', JSON.stringify(insertData));
-              initializeActiveRole(insertData);
+
+              // Initiate active role logic
+              if (defaultRole === 'pending') {
+                // For pending, we don't set an active role that allows access, force selection
+                setActiveRole(null);
+                localStorage.removeItem('activeRole');
+              } else {
+                setActiveRole(defaultRole);
+                localStorage.setItem('activeRole', defaultRole);
+              }
+
               return;
             }
           }
         }
 
-        // If we can't fetch or create the profile, keep the temporary one
         console.log('Keeping temporary profile for navigation');
         return;
       }
 
       console.log('User profile fetched successfully:', data);
       setUserProfile(data);
-      // Store in localStorage for compatibility with existing components
       localStorage.setItem('userProfile', JSON.stringify(data));
 
+      // Initialize role based on fetched data only
       initializeActiveRole(data);
     } catch (error) {
       console.error('Error fetching user profile:', error);
-      // Keep temporary profile on error
       console.log('Keeping temporary profile due to error');
     }
   };
 
+  const syncEmailVerification = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .update({ is_verified: true })
+        .eq('id', userId)
+        .eq('is_verified', false) // Only update if currently false
+        .select();
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        console.log('Synced email verification status for user:', userId);
+        // Update local state if needed
+        setUserProfile(prev => prev ? { ...prev, is_verified: true } : prev);
+      }
+    } catch (err) {
+      console.error('Error syncing email verification:', err);
+    }
+  };
+
+  // Allow components to update just the active role without hitting Supabase
+  const updateActiveRole = (role) => {
+    setActiveRole(role);
+    localStorage.setItem('activeRole', role);
+    console.log('Active role updated to:', role);
+  };
+
   const initializeActiveRole = (profile) => {
     const storedActiveRole = localStorage.getItem('activeRole');
-    console.log('Stored active role:', storedActiveRole);
+    console.log('Initializing Active Role. Stored:', storedActiveRole);
     console.log('User roles:', profile.roles);
 
-    if (storedActiveRole && profile.roles && profile.roles.includes(storedActiveRole)) {
-      console.log('Setting active role from localStorage:', storedActiveRole);
-      setActiveRole(storedActiveRole);
-    } else if (profile.roles && profile.roles.length > 0) {
+    // 1. Try to use stored active role if it's valid for this user
+    if (storedActiveRole) {
+      const userHasRole = (profile.roles && profile.roles.includes(storedActiveRole)) ||
+        (profile.role === storedActiveRole);
+      if (userHasRole) {
+        console.log('Restoring active role from localStorage:', storedActiveRole);
+        setActiveRole(storedActiveRole);
+        return;
+      } else {
+        console.warn('Stored active role is no longer valid for this user. Clearing.');
+        localStorage.removeItem('activeRole');
+      }
+    }
+
+    // 2. Fallback: Default to first available role
+    if (profile.roles && profile.roles.length > 0) {
       console.log('Setting active role to first role:', profile.roles[0]);
       setActiveRole(profile.roles[0]);
       localStorage.setItem('activeRole', profile.roles[0]);
@@ -308,22 +373,29 @@ export function AuthProvider({ children }) {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+
+      // Clear all user state
       setUser(null);
       setUserProfile(null);
       setActiveRole(null);
-      // Clear localStorage
-      localStorage.removeItem('userProfile');
-      localStorage.removeItem('activeRole');
+
+      // Clear all localStorage and sessionStorage data
+      localStorage.clear();
+      sessionStorage.clear();
+
+      console.log('User signed out and all local data cleared');
     } catch (error) {
       console.error('Error signing out:', error);
+      // Even if sign out fails, clear local data
+      setUser(null);
+      setUserProfile(null);
+      setActiveRole(null);
+      localStorage.clear();
+      sessionStorage.clear();
     }
   };
 
-  // Allow components to update just the active role without hitting Supabase
-  const updateActiveRole = (role) => {
-    setActiveRole(role);
-    localStorage.setItem('activeRole', role);
-  };
+
 
   // Ensure we sync local profile writes with the new role switching flow
   const updateUserProfile = (profile) => {
@@ -358,7 +430,7 @@ export function AuthProvider({ children }) {
     updateActiveRole,
     validateEmailDomain,
     isAuthenticated: !!user,
-    isVerified: userProfile?.isVerified || false,
+    isVerified: userProfile?.is_verified || false,
   };
 
   return (

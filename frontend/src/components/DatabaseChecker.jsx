@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 
 function DatabaseChecker() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const addResult = (test, status, message, data = null) => {
-    setResults(prev => [...prev, { 
-      test, 
-      status, 
-      message, 
+    setResults(prev => [...prev, {
+      test,
+      status,
+      message,
       data,
-      timestamp: new Date().toLocaleTimeString() 
+      timestamp: formatDateDDMMYYYY(new Date())
     }]);
   };
 
@@ -80,19 +81,19 @@ function DatabaseChecker() {
         email: 'hod@git-india.edu.in',
         password: 'password123'
       });
-      
+
       if (error) {
         addResult('Test Login', 'fail', `Login failed: ${error.message}`);
       } else {
         addResult('Test Login', 'pass', `Login successful for: ${data.user.email}`);
-        
+
         // Check if profile exists for this user
         const { data: profile, error: profileError } = await supabase
           .from('users')
           .select('*')
           .eq('id', data.user.id)
           .single();
-          
+
         if (profileError) {
           addResult('User Profile', 'fail', `Profile not found: ${profileError.message}`);
         } else {
@@ -133,7 +134,7 @@ function DatabaseChecker() {
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-lg shadow-lg p-6">
           <h1 className="text-2xl font-bold text-gray-800 mb-6">Database & Authentication Checker</h1>
-          
+
           <div className="mb-6">
             <button
               onClick={runChecks}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,6 +14,7 @@ import {
   FaSearch,
   FaCalendarAlt
 } from 'react-icons/fa';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 import RoleSwitcher from './RoleSwitcher';
 import Loader from './ui/Loader';
 
@@ -27,10 +28,9 @@ const submissionStages = [
   { key: 'finalReport', label: 'Final Report', allowedTypes: ['pdf'] },
   { key: 'finalDemo', label: 'Final Demo', allowedTypes: ['mp4', 'mkv'] },
   { key: 'finalPpt', label: 'Final PPT', allowedTypes: ['pdf'] },
-  { key: 'codebook', label: 'Codebook', allowedTypes: ['docx', 'pdf'] },
-  { key: 'achievements', label: 'Achievements', allowedTypes: ['pdf', 'txt', 'docx'] },
-  { key: 'feedbackForm', label: 'Feedback Form', allowedTypes: [], isForm: true }
+  { key: 'codebook', label: 'Codebook', allowedTypes: ['docx', 'pdf'] }
 ];
+
 
 const statusOptions = [
   { value: 'accepted', label: 'Accepted', icon: '✅', color: 'text-green-600' },
@@ -38,29 +38,12 @@ const statusOptions = [
   { value: 'pending', label: 'Pending', icon: '⏳', color: 'text-gray-600' }
 ];
 
-const formatDate = (dateString) => {
-  if (!dateString) return 'N/A';
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (error) {
-    console.error('Error formatting date:', error);
-    return 'Invalid Date';
-  }
-};
+// formatDate helper removed in favor of formatDateDDMMYYYY utility
 
 const MentorDashboard = () => {
   const navigate = useNavigate();
   const { signOut, userProfile, activeRole, updateActiveRole, updateUserProfile } = useAuth();
   const { selectedYear, isProjectInYear } = useAcademicYear();
-
-  if (!selectedYear) return null;
 
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mentor, setMentor] = useState(null);
@@ -85,6 +68,8 @@ const MentorDashboard = () => {
 
   // Restoration: Search State
   const [searchTerm, setSearchTerm] = useState('');
+
+
 
   // Restoration: Filtered Projects Logic
   const filteredProjects = useMemo(() => {
@@ -180,42 +165,75 @@ const MentorDashboard = () => {
     init();
   }, [navigate]);
 
+  const loadSubmissions = useCallback(async () => {
+    if (!selectedProjectId) {
+      setSubmissions([]);
+      return;
+    }
+
+    setLoadingSubmissions(true);
+    setError(null);
+
+    try {
+      const { data, error: submissionsError } = await supabase
+        .from('submissions')
+        .select('*')
+        .eq('project_id', selectedProjectId)
+        .order('created_at', { ascending: true });
+
+      if (submissionsError) throw submissionsError;
+
+      setSubmissions(data || []);
+    } catch (loadError) {
+      console.error('Submissions load error:', loadError);
+      setError('Failed to load submissions.');
+      toast.error('Failed to load submissions.');
+      setSubmissions([]);
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  }, [selectedProjectId]);
+
   useEffect(() => {
-    const loadSubmissions = async () => {
-      if (!selectedProjectId) {
-        setSubmissions([]);
-        return;
-      }
-
-      setLoadingSubmissions(true);
-      setError(null);
-
-      try {
-        const { data, error: submissionsError } = await supabase
-          .from('submissions')
-          .select('*')
-          .eq('project_id', selectedProjectId)
-          .order('created_at', { ascending: true });
-
-        if (submissionsError) throw submissionsError;
-
-        setSubmissions(data || []);
-      } catch (loadError) {
-        console.error('Submissions load error:', loadError);
-        setError('Failed to load submissions.');
-        toast.error('Failed to load submissions.');
-        setSubmissions([]);
-      } finally {
-        setLoadingSubmissions(false);
-      }
-    };
-
     loadSubmissions();
+  }, [loadSubmissions]);
+
+
+
+  // Realtime subscription for submissions
+  useEffect(() => {
+    if (!selectedProjectId) return;
+
+    const subscription = supabase
+      .channel(`mentor_submissions_${selectedProjectId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'submissions',
+          filter: `project_id=eq.${selectedProjectId}`
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setSubmissions(prev => [...prev, payload.new]);
+          } else if (payload.eventType === 'UPDATE') {
+            setSubmissions(prev => prev.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s));
+          } else if (payload.eventType === 'DELETE') {
+            setSubmissions(prev => prev.filter(s => s.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
   }, [selectedProjectId]);
 
   useEffect(() => {
     const fetchProjects = async () => {
-      if (!mentor) return;
+      if (!mentor || !selectedYear) return;
       setLoadingProjects(true);
       setError(null);
 
@@ -243,11 +261,17 @@ const MentorDashboard = () => {
         });
 
         if (projectFilters.length > 0) {
-          const { data: directProjects, error: projectsError } = await supabase
+          let directQuery = supabase
             .from('projects')
             .select('*')
             .or(projectFilters.join(','))
             .order('created_at', { ascending: false });
+
+          if (selectedYear && selectedYear.name) {
+            directQuery = directQuery.contains('visible_sessions', [selectedYear.name]);
+          }
+
+          const { data: directProjects, error: projectsError } = await directQuery;
 
           if (projectsError) throw projectsError;
 
@@ -259,16 +283,16 @@ const MentorDashboard = () => {
         }
 
         // 2. Fetch projects where mentor is a team member with role 'mentor'
+        // 2. Fetch projects where mentor is a team member with role 'mentor'
         const teamFilters = [];
+        // 'project_team_members' table uses 'user_id' and 'role'. It does not have an 'email' column.
         if (mentorId) teamFilters.push(`user_id.eq.${mentorId}`);
-        emailVariants.forEach(emailValue => {
-          teamFilters.push(`email.eq.${emailValue}`);
-        });
+        // Removed email filters as the table doesn't support them.
 
         if (teamFilters.length > 0) {
           const { data: teamAssignments, error: teamError } = await supabase
             .from('project_team_members')
-            .select('project_id, role_in_project, user_id, email')
+            .select('project_id, role, user_id') // Removed 'email', changed 'role_in_project' to 'role'
             .or(teamFilters.join(','));
 
           if (teamError) throw teamError;
@@ -282,7 +306,8 @@ const MentorDashboard = () => {
           const assignmentProjectIds = new Set();
           (teamAssignments || []).forEach(entry => {
             if (!entry?.project_id) return;
-            if (!entry.role_in_project || mentorRoleMatch(entry.role_in_project)) {
+            // Check 'role' instead of 'role_in_project'
+            if (!entry.role || mentorRoleMatch(entry.role)) {
               assignmentProjectIds.add(entry.project_id);
             }
           });
@@ -290,11 +315,17 @@ const MentorDashboard = () => {
           const missingIds = Array.from(assignmentProjectIds).filter(projectId => !normalizedProjectMap[projectId]);
 
           if (missingIds.length > 0) {
-            const { data: assignedProjects, error: assignedError } = await supabase
+            let assignedQuery = supabase
               .from('projects')
               .select('*')
               .in('id', missingIds)
               .order('created_at', { ascending: false });
+
+            if (selectedYear && selectedYear.name) {
+              assignedQuery = assignedQuery.contains('visible_sessions', [selectedYear.name]);
+            }
+
+            const { data: assignedProjects, error: assignedError } = await assignedQuery;
 
             if (assignedError) throw assignedError;
 
@@ -315,18 +346,25 @@ const MentorDashboard = () => {
           // A. Fetch from project_team_members
           const { data: teamMembers, error: teamMembersError } = await supabase
             .from('project_team_members')
-            .select('*')
+            .select('*, user:users!user_id(id, full_name, email)')
             .in('project_id', projectIds);
 
           if (!teamMembersError && teamMembers) {
             teamMembers.forEach(member => {
               if (normalizedProjectMap[member.project_id]) {
+                const memberEmail = member.user?.email;
+                const memberName = member.user?.full_name;
+                const memberRole = member.role;
+
                 // Filter out the mentor themselves
-                const isMentor = member.user_id === mentorId || emailVariants.has(member.email) || (member.role_in_project && member.role_in_project.toLowerCase().includes('mentor'));
+                const isMentor = member.user_id === mentorId ||
+                  (memberEmail && emailVariants.has(memberEmail)) ||
+                  (memberRole && memberRole.toLowerCase().includes('mentor'));
+
                 if (!isMentor) {
                   normalizedProjectMap[member.project_id].mentees.push({
-                    name: member.name || member.email?.split('@')[0] || 'Unknown',
-                    email: member.email,
+                    name: memberName || memberEmail?.split('@')[0] || 'Unknown',
+                    email: memberEmail,
                     source: 'team_member'
                   });
                 }
@@ -376,20 +414,25 @@ const MentorDashboard = () => {
         const finalProjects = Array.from(Object.values(normalizedProjectMap))
           .sort((a, b) => new Date(b?.created_at || 0) - new Date(a?.created_at || 0));
 
-        setProjects(finalProjects);
+        // Filter projects by academic year
+        const filteredProjects = finalProjects.filter(project =>
+          isProjectInYear(project)
+        );
+
+        setProjects(filteredProjects);
         setError(null);
 
-        if (finalProjects.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(finalProjects[0]?.id || null);
+        if (filteredProjects.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(filteredProjects[0]?.id || null);
         }
 
-        if (finalProjects.length > 0) {
+        if (filteredProjects.length > 0) {
           try {
-            await fetchAllProjectDeliverables(finalProjects);
+            await fetchAllProjectDeliverables(filteredProjects);
           } catch (fetchError) {
             console.error('Error fetching deliverables:', fetchError);
           }
-          const finalProjectIds = finalProjects.map(project => project.id).filter(Boolean);
+          const finalProjectIds = filteredProjects.map(project => project.id).filter(Boolean);
           currentProjectIdsRef.current = finalProjectIds;
           await fetchProjectFiles(finalProjectIds);
           setupProjectFilesSubscription(finalProjectIds);
@@ -412,6 +455,13 @@ const MentorDashboard = () => {
 
     fetchProjects();
   }, [mentor]);
+
+  // Refetch projects when year changes
+  useEffect(() => {
+    if (mentor && selectedYear) {
+      fetchProjects();
+    }
+  }, [selectedYear]);
 
   const fetchProjectFiles = async (projectIds) => {
     if (!mentor || !mentor.id || !projectIds || projectIds.length === 0) {
@@ -438,7 +488,7 @@ const MentorDashboard = () => {
       if (menteeIds.length > 0) {
         const { data: usersData, error: usersError } = await supabase
           .from('users')
-          .select('id, name, email')
+          .select('id, full_name, email')
           .in('id', menteeIds);
 
         if (usersError) {
@@ -459,7 +509,7 @@ const MentorDashboard = () => {
       (data || []).forEach(file => {
         if (!filesByProject[file.project_id]) return;
         const uploader = uploaderMap[file.uploaded_by];
-        const uploaderName = uploader?.name || uploader?.email || 'Mentee';
+        const uploaderName = uploader?.full_name || uploader?.name || uploader?.email || 'Mentee';
         const uploaderEmail = uploader?.email || '';
         filesByProject[file.project_id].push({
           ...file,
@@ -502,14 +552,21 @@ const MentorDashboard = () => {
     if (!submission) return;
     try {
       const updating = toast.loading('Updating status...');
-      const { error: updateError } = await supabase
+      const { data: updatedData, error: updateError } = await supabase
         .from('submissions')
         .update({ status: newStatus })
-        .eq('id', submission.id);
+        .eq('id', submission.id)
+        .select();
 
       if (updateError) throw updateError;
 
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('Status update failed: Permission denied.');
+      }
+
       toast.success('Status updated.');
+
+      // Update local state
       setSubmissions(prev => prev.map(item => item.id === submission.id ? { ...item, status: newStatus } : item));
       toast.dismiss(updating);
     } catch (statusError) {
@@ -568,22 +625,31 @@ const MentorDashboard = () => {
     const saving = toast.loading('Saving remark...');
 
     try {
-      const { error: remarkError } = await supabase
+      const { data: updatedData, error: remarkError } = await supabase
         .from('submissions')
         .update({ remark: remarkModal.remark.trim() })
-        .eq('id', remarkModal.submission.id);
+        .eq('id', remarkModal.submission.id)
+        .select();
 
       if (remarkError) throw remarkError;
 
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('Update failed: Permission denied or submission not found.');
+      }
+
+      // Update local state immediately to reflect the change
       setSubmissions(prev => (
         prev.map(item => item.id === remarkModal.submission.id ? { ...item, remark: remarkModal.remark.trim() } : item)
       ));
 
-      toast.success('Remark saved.');
+      toast.success('Remark saved successfully!');
       setRemarkModal({ open: false, submission: null, remark: '' });
+
+      // Reload submissions to ensure data consistency
+      await loadSubmissions();
     } catch (remarkError) {
       console.error('Remark save error:', remarkError);
-      toast.error('Failed to save remark.');
+      toast.error('Failed to save remark. Please try again.');
     } finally {
       toast.dismiss(saving);
     }
@@ -651,9 +717,11 @@ const MentorDashboard = () => {
       updateUserProfile(updatedProfile);
 
       // Switch to the new role
+      toast.success(`Role updated! Switching to ${newRole}...`);
       switchToRole(newRole);
     } catch (error) {
       console.error('Error assigning role:', error);
+      toast.error(error.message || 'Failed to assign role');
       setError('Failed to assign role. Please try again.');
       // Hide error message after 5 seconds
       setTimeout(() => setError(null), 5000);
@@ -685,18 +753,21 @@ const MentorDashboard = () => {
       const projectIds = projects.map(p => p.id).filter(Boolean);
       if (!projectIds.length) return;
 
-      // Use the database function we created
-      const { data, error } = await supabase
-        .rpc('get_mentor_submissions', { project_ids: projectIds });
+      // Fetch submissions directly instead of using non-existent RPC function
+      const { data: submissionsData, error: submissionsError } = await supabase
+        .from('submissions')
+        .select('*')
+        .in('project_id', projectIds)
+        .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error fetching submissions:', error);
-        throw error;
+      if (submissionsError) {
+        console.error('Error fetching submissions:', submissionsError);
+        throw submissionsError;
       }
 
       // Process the data
       const deliverablesByProject = {};
-      (data || []).forEach(submission => {
+      (submissionsData || []).forEach(submission => {
         const projectId = submission.project_id;
         if (!projectId) return;
 
@@ -755,6 +826,8 @@ const MentorDashboard = () => {
     projectFileChannelRef.current = channel;
   };
 
+
+
   if (checkingAuth) {
     return (
       <Loader />
@@ -763,7 +836,7 @@ const MentorDashboard = () => {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#0B0F19] text-gray-100">
-      <aside className="w-full md:w-1/4 lg:w-1/5 bg-gradient-to-b from-[#0B0F19] to-[#1B2430] border-r border-slate-800">
+      <aside className="w-full md:w-1/4 lg:w-1/5 bg-gradient-to-b from-[#0B0F19] to-[#1B2430] border-r border-slate-800 flex flex-col h-screen sticky top-0">
         <div className="px-6 py-8 border-b border-slate-800">
           <h2 className="text-xl font-bold text-white">Mentor Dashboard</h2>
           <p className="text-sm text-slate-400 mt-1">Review assigned projects and submissions</p>
@@ -787,7 +860,7 @@ const MentorDashboard = () => {
           </div>
         </div>
 
-        <div className="px-4 py-6 space-y-4 h-[calc(100vh-280px)] overflow-y-auto">
+        <div className="px-4 py-6 space-y-4 flex-1 overflow-y-auto">
           {loadingProjects ? (
             <div className="flex items-center justify-center py-10 text-slate-400">
               <FaSpinner className="animate-spin mr-2" />
@@ -835,26 +908,50 @@ const MentorDashboard = () => {
 
         <div className="px-6 py-6 border-t border-slate-800">
           <div className="mb-4">
-            <div className="text-sm font-semibold text-white">{mentor?.name || mentor?.email}</div>
+            <div className="text-sm font-semibold text-white">{mentor?.name || 'Mentor'}</div>
             <div className="text-xs text-slate-400 capitalize">{mentor?.role}</div>
           </div>
 
           {/* Role Switching & Become Actions Block */}
           <div className="flex flex-col gap-2 w-full mb-4">
             {/* Only show RoleSwitcher if user has multiple roles (handled internally, but explicit here for clarity) */}
-            <RoleSwitcher className="block w-full" />
 
-            {/* Become button removed to strictly enforce single-role rule for Mentors */}
-            {/* Become button removed to strictly enforce single-role rule for Mentors */}
+
+            {/* Become Role Button - Only show if user doesn't have multiple roles yet */}
+            {(!userProfile?.roles || userProfile.roles.filter(r => r !== 'mentee').length <= 1) && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowBecomeMenu(!showBecomeMenu)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition"
+                >
+                  Become
+                </button>
+
+                {showBecomeMenu && (
+                  <div className="absolute bottom-full left-0 mb-2 w-full bg-white rounded-lg shadow-xl py-1 z-50 border border-slate-200 overflow-hidden">
+                    <button
+                      onClick={() => handleBecomeRole('hod')}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 transition-colors border-b border-gray-100"
+                    >
+                      Become a HOD
+                    </button>
+                    <button
+                      onClick={() => handleBecomeRole('project_coordinator')}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 transition-colors"
+                    >
+                      Become a Coordinator
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 rounded-lg transition"
-          >
-            <FaSignOutAlt /> Logout
-          </button>
+
         </div>
+
+
+
       </aside>
 
       <main className="flex-1 bg-gray-50 text-gray-900 min-h-screen">
@@ -875,13 +972,13 @@ const MentorDashboard = () => {
                       {selectedProject.domain || 'Domain not set'}
                     </span>
                     <span className="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-700 text-sm font-medium">
-                      <span className="text-slate-600 text-xs mr-1">Duration:</span> {selectedProject.duration_months || 12} months
+                      <span className="text-slate-600 text-xs mr-1">Duration:</span> {selectedProject.duration_months || (selectedProject.deadline ? Math.round((new Date(selectedProject.deadline) - new Date(selectedProject.created_at || Date.now())) / (1000 * 60 * 60 * 24 * 30.44)) : 12)} months
                     </span>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <span className="text-xs text-slate-400">
-                    Last updated: {new Date(selectedProject.updated_at || selectedProject.created_at).toLocaleDateString()}
+                    Last updated: {formatDateDDMMYYYY(selectedProject.updated_at || selectedProject.created_at)}
                   </span>
                 </div>
               </div>
@@ -1077,14 +1174,7 @@ const MentorDashboard = () => {
                                   >
                                     <FaCommentDots /> Save Remark
                                   </button>
-                                  <button
-                                    onClick={() => submission && handleDeleteSubmission(submission)}
-                                    disabled={!submission}
-                                    className={`px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition ${submission ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                      }`}
-                                  >
-                                    <FaTrash /> Delete
-                                  </button>
+
                                 </>
                               )}
                             </div>
@@ -1113,6 +1203,9 @@ const MentorDashboard = () => {
                   </div>
                 )}
               </div>
+
+              {/* NEW: Feedback Submissions List (Persistent) */}
+
 
               <div className="overflow-x-auto">
                 {(() => {
@@ -1144,7 +1237,7 @@ const MentorDashboard = () => {
                               <td className="px-6 py-4 text-sm text-slate-700">{projectName}</td>
                               <td className="px-6 py-4 text-sm text-slate-700">{file.uploaderName}</td>
                               <td className="px-6 py-4 text-sm text-slate-600">{file.file_type || 'Submission'}</td>
-                              <td className="px-6 py-4 text-sm text-slate-500">{formatDate(file.created_at)}</td>
+                              <td className="px-6 py-4 text-sm text-slate-500">{formatDateDDMMYYYY(file.created_at)}</td>
                               <td className="px-6 py-4">
                                 <button
                                   onClick={() => window.open(file.file_url, '_blank')}
@@ -1166,38 +1259,42 @@ const MentorDashboard = () => {
         )}
       </main>
 
-      {remarkModal.open && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
-            <h3 className="text-xl font-semibold text-slate-900 mb-4">Add Remark</h3>
-            <p className="text-sm text-slate-500 mb-4">
-              {remarkModal.submission?.filename || 'Submission'}
-            </p>
-            <textarea
-              value={remarkModal.remark}
-              onChange={event => setRemarkModal(prev => ({ ...prev, remark: event.target.value }))}
-              rows={4}
-              className="w-full border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-slate-900 placeholder-slate-400"
-              placeholder="Enter feedback for this submission"
-            />
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setRemarkModal({ open: false, submission: null, remark: '' })}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveRemark}
-                className="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition"
-              >
-                Save Remark
-              </button>
+      {
+        remarkModal.open && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
+              <h3 className="text-xl font-semibold text-slate-900 mb-4">Add Remark</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                {remarkModal.submission?.filename || 'Submission'}
+              </p>
+              <textarea
+                value={remarkModal.remark}
+                onChange={event => setRemarkModal(prev => ({ ...prev, remark: event.target.value }))}
+                rows={4}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-slate-900 placeholder-slate-400"
+                placeholder="Enter feedback for this submission"
+              />
+              <div className="flex justify-end gap-3 mt-6">
+                <button
+                  onClick={() => setRemarkModal({ open: false, submission: null, remark: '' })}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveRemark}
+                  className="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition"
+                >
+                  Save Remark
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+
+
+    </div >
   );
 };
 

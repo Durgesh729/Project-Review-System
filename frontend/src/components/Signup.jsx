@@ -79,7 +79,8 @@ function Signup() {
             const { data: loginData, error: loginError } = await signIn(email.toLowerCase().trim(), password);
             if (loginError) {
               console.log('Auto-login failed:', loginError.message);
-              setServerMessage('Account created but login failed. Please try logging in manually.');
+              // Show success message instead of error, effectively guiding user to manual login/verification
+              setServerMessage('Account created successfully! Please check your email and try to login.');
             } else {
               setServerMessage('Account created and logged in successfully!');
 
@@ -98,7 +99,24 @@ function Signup() {
             }
           } catch (err) {
             console.log('Auto-login error:', err.message);
-            setServerMessage('Account created but login failed. Please try logging in manually.');
+
+            // Check if error is due to email verification
+            if (err.message.includes('verify your email') || err.message.includes('Email not confirmed')) {
+              const verificationMessage = 'Account created successfully! Please check your email to verify your account before logging in.';
+              setServerMessage(verificationMessage);
+
+              // Clear form
+              setName('');
+              setEmail('');
+              setPassword('');
+              setRole('mentee');
+
+              setTimeout(() => {
+                navigate('/verify-email');
+              }, 3000);
+            } else {
+              setServerMessage('Account created successfully! Please try to login manually.');
+            }
           }
         } else {
           // Production: Show verification message
@@ -263,7 +281,7 @@ function Signup() {
                   <option value="" disabled>Select your role</option>
                   <option value="mentee">Mentee</option>
                   <option value="mentor">Mentor</option>
-                  <option value="project_coordinator">Project Coordinator</option>
+                  <option value="project_coordinator">Coordinator</option>
                   <option value="hod">HOD</option>
                 </select>
                 {roleError && <p className="mt-1 text-xs text-red-600">{roleError}</p>}

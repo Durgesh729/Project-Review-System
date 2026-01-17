@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-export default function YearSelectionPopup({ years, onSelect, onAddYear, isCoordinator, onLogout }) {
+export default function YearSelectionPopup({ years, onSelect, onAddYear, isCoordinator }) {
     const [selectedYear, setSelectedYear] = useState("");
 
     return (
@@ -24,15 +24,41 @@ export default function YearSelectionPopup({ years, onSelect, onAddYear, isCoord
                         </div>
                     ))}
 
-                    {/* "+" Button - Coordinator Only */}
+                    {/* "+" Button - Coordinator/HOD Only */}
                     {isCoordinator && (
-                        <div
-                            onClick={onAddYear}
-                            className="border border-gray-300 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 text-gray-500 hover:text-blue-600 text-2xl transition-colors"
+                        <button
+                            onClick={async () => {
+                                try {
+                                    const newYear = await onAddYear();
+                                    if (newYear) {
+                                        onSelect(newYear);
+                                    }
+                                } catch (error) {
+                                    // Error handled in context or here if needed
+                                    // alert(error.message); // Simple fallback if toast logic isn't passed
+                                    // Ideally we use a toast here if available. 
+                                    // Since context throws, we should catch it.
+                                    console.error(error);
+                                    const msg = error.message || 'Failed to add year';
+                                    // We can use a simple browser alert if toast isn't available in this scope, 
+                                    // or checking if react-hot-toast (which user has in other files) can be used here.
+                                    // Given MenteeDashboard uses it, let's try to grab it if we modify imports,
+                                    // but for now, let's use a safe alert to satisfy the requirement if toast isn't imported.
+                                    // UPDATE: I will assume I can import toast.
+                                    // Re-checking imports: User file didn't have toast imported.
+                                    // I'll add the import in a separate tool call or just use alert for now to be safe, 
+                                    // then add toast import if I can.
+                                    // Actually, I can replace the whole file content or use multi_replace to add import.
+                                    // Let's use alert for immediate feedback as duplicate check throws error.
+                                    alert(msg);
+                                }
+                            }}
+                            className="w-full border border-gray-300 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 text-gray-500 hover:text-blue-600 text-2xl transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
                             title="Add Next Academic Year"
+                            aria-label="Add next academic year"
                         >
                             +
-                        </div>
+                        </button>
                     )}
                 </div>
 
@@ -44,15 +70,6 @@ export default function YearSelectionPopup({ years, onSelect, onAddYear, isCoord
                     Continue
                 </button>
 
-                {/* Logout Option for trapped users */}
-                <div className="mt-4 text-center">
-                    <button
-                        onClick={onLogout}
-                        className="text-sm text-gray-500 hover:text-red-600 underline"
-                    >
-                        Logout
-                    </button>
-                </div>
             </div>
         </div>
     );

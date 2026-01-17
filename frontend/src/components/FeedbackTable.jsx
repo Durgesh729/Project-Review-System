@@ -1,5 +1,6 @@
 import React from 'react'
 import { useFeedback } from '../hooks/useFeedback'
+import { formatDateDDMMYYYY } from '../utils/dateUtils'
 
 const FeedbackTable = () => {
   const { feedback, loading, error } = useFeedback()
@@ -19,7 +20,7 @@ const FeedbackTable = () => {
               <p className="mt-2">{item.message}</p>
               <div className="card-actions justify-end">
                 <span className="text-xs text-gray-500">
-                  {new Date(item.created_at).toLocaleDateString()}
+                  {formatDateDDMMYYYY(item.created_at)}
                 </span>
               </div>
             </div>

@@ -61,18 +61,31 @@ function RoleSelection() {
     }
 
     try {
-      // Ensure primary role is included in roles array
+      // STRICT OVERRIDE POLICY:
+      // When selecting a role here, we treat it as the definitive "fresh start".
+      // We do NOT merge with previous roles (which might be 'pending' or from a deleted account).
+
       let finalRoles = [...selectedRoles];
-      if (userProfile.role && !finalRoles.includes(userProfile.role)) {
-        // Should we force the primary role? 
-        // "Save selected roles in Supabase roles array."
-        // If they signed up as Coordinator, they ARE a Coordinator.
-        finalRoles.push(userProfile.role);
-        finalRoles = [...new Set(finalRoles)];
+
+      // The Primary Role is simply the first selected role (or the only one).
+      // For multi-select (Coord/HOD), the logic might allow multiple, but one must be primary.
+      // In this specific UI, the primary role is usually implied by the context or the first selection.
+      // However, if we are in the "Select Additional Roles" mode (Coord/HOD), we SHOULD preserve the primary.
+
+      let primaryRole = selectedRoles[0];
+
+      // If the user ALREADY has a valid primary role (e.g. Coordinator adding Mentor), keep it.
+      if (userProfile.role && userProfile.role !== 'pending') {
+        primaryRole = userProfile.role;
+        // Ensure it's in the list
+        if (!finalRoles.includes(primaryRole)) {
+          finalRoles.push(primaryRole);
+        }
       }
 
       const updates = {
-        roles: finalRoles,
+        role: primaryRole, // Update primary role column
+        roles: finalRoles, // Overwrite roles array
         updated_at: new Date()
       };
 
@@ -95,7 +108,6 @@ function RoleSelection() {
         project_coordinator: '/components/dashboard/coordinator',
       };
 
-      const primaryRole = userProfile.role || finalRoles[0];
       const dashboardPath = dashboardPaths[primaryRole] || dashboardPaths.mentee;
 
       navigate(dashboardPath, { replace: true });
@@ -155,7 +167,7 @@ function RoleSelection() {
                       disabled={userProfile.role === 'project_coordinator'} // Keep primary mandatory
                     />
                     <div className="ml-3">
-                      <span className="font-medium block">Project Coordinator</span>
+                      <span className="font-medium block">Coordinator</span>
                       <span className="text-xs text-gray-500">Managing project activities</span>
                     </div>
                   </label>
@@ -176,8 +188,32 @@ function RoleSelection() {
                 </>
               )}
 
-              {/* Fallback or non-eligible view (shouldn't be reached often due to redirects) */}
-              {!isMultiSelectEligible && (
+              {/* Logic for Initial Selection (Pending) */}
+              {userProfile.role === 'pending' && (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Select your primary role:</p>
+                  {['mentee', 'mentor', 'project_coordinator', 'hod'].map((roleOption) => (
+                    <label key={roleOption} className={`flex items-center p-3 border rounded-md hover:bg-gray-50 cursor-pointer ${selectedRoles.includes(roleOption) ? 'border-blue-500 bg-blue-50' : ''}`}>
+                      <input
+                        type="radio"
+                        name="primaryRole"
+                        checked={selectedRoles.includes(roleOption)}
+                        onChange={() => {
+                          // For primary selection, we only allow one
+                          setSelectedRoles([roleOption]);
+                        }}
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                      />
+                      <div className="ml-3">
+                        <span className="font-medium block capitalize">{roleOption.replace('_', ' ')}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {/* Fallback or non-eligible view */}
+              {!isMultiSelectEligible && userProfile.role !== 'pending' && (
                 <div className="p-3 bg-gray-50 rounded-md border text-center">
                   <span className="font-medium text-gray-700">
                     {userProfile.role ? userProfile.role.charAt(0).toUpperCase() + userProfile.role.slice(1) : 'Loading...'}

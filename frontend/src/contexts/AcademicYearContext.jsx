@@ -18,6 +18,8 @@ export const AcademicYearProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     const isCoordinator = userProfile?.roles?.includes('project_coordinator') || userProfile?.role === 'project_coordinator';
+    const isHod = userProfile?.roles?.includes('hod') || userProfile?.role === 'hod';
+    const canAddYear = isCoordinator || isHod;
 
     // Derived selected year based on active role
     const selectedYear = activeRole ? selectedYearsByRole[activeRole] || null : null;
@@ -58,27 +60,47 @@ export const AcademicYearProvider = ({ children }) => {
     };
 
     const addNextYear = async () => {
-        if (!isCoordinator) return;
+        if (!canAddYear) return null;
 
         try {
             // 1. Find max year
-            let lastYearEnd = 2025; // Default base
-            let lastYearName = "2024-2025";
+            let lastYearEnd = new Date().getFullYear(); // Default base if no years exist
 
+            // Try to find the latest year from existing list
             if (availableYears.length > 0) {
                 // Sort by name to get latest
-                const sorted = [...availableYears].sort((a, b) => a.name.localeCompare(b.name));
-                lastYearName = sorted[sorted.length - 1].name;
-                // Parse "CY-NY" e.g "2024-2025" -> 2025
+                // Assumption: name format is always "YYYY-YYYY"
+                const sorted = [...availableYears].sort((a, b) => {
+                    const startA = parseInt(a.name.split('-')[0]) || 0;
+                    const startB = parseInt(b.name.split('-')[0]) || 0;
+                    return startA - startB;
+                });
+
+                const lastYearName = sorted[sorted.length - 1].name;
                 const parts = lastYearName.split('-');
                 if (parts.length === 2) {
-                    lastYearEnd = parseInt(parts[1]);
+                    lastYearEnd = parseInt(parts[1], 10);
                 }
+            } else {
+                // If completely empty, assume we are starting from current year's start
+                // e.g. if now is 2026, we likely want "2025-2026" as the first option
+                lastYearEnd = new Date().getFullYear() - 1;
             }
 
+            // Calculate next year
+            // Logic: "YYYY-YYYY" -> increment both by 1
+            // e.g. 2025-2026 -> 2026-2027
             const nextStartYear = lastYearEnd;
             const nextEndYear = lastYearEnd + 1;
             const nextYearName = `${nextStartYear}-${nextEndYear}`;
+
+            // Duplicate Check
+            const exists = availableYears.some(y => y.name === nextYearName);
+            if (exists) {
+                // Return explicit error object or throw
+                throw new Error(`Year ${nextYearName} already exists`);
+            }
+
             const nextStartDate = `${nextStartYear}-07-01`;
             const nextEndDate = `${nextEndYear}-06-30`;
 
@@ -96,10 +118,13 @@ export const AcademicYearProvider = ({ children }) => {
             if (error) throw error;
 
             // 3. Update local state
-            setAvailableYears(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+            const newYear = data;
+            setAvailableYears(prev => [...prev, newYear].sort((a, b) => a.name.localeCompare(b.name)));
+
+            return newYear;
         } catch (error) {
             console.error('Error creating next academic year:', error);
-            alert('Failed to create next academic year. Please ensure the database table exists.');
+            throw error; // Propagate to UI
         }
     };
 
@@ -118,8 +143,14 @@ export const AcademicYearProvider = ({ children }) => {
     const isProjectInYear = (project, year = selectedYear) => {
         if (!year) return true; // Fallback
 
-        // Project Start: created_at or assigned_at or start_date
-        const projectStartRaw = project.created_at || project.assigned_at || new Date().toISOString();
+        // 1. Authoritative: Use server-computed visible_sessions if available
+        if (project.visible_sessions && Array.isArray(project.visible_sessions)) {
+            return project.visible_sessions.includes(year.name);
+        }
+
+        // 2. Legacy Fallback: Client-side calculation
+        // Project Start: prioritize assigned_at, then created_at
+        const projectStartRaw = project.assigned_at || project.created_at || new Date().toISOString();
         const projectStartDate = new Date(projectStartRaw);
 
         // Project Duration: duration_months or default 12
@@ -131,15 +162,24 @@ export const AcademicYearProvider = ({ children }) => {
         else if (project.duration === '4 Semesters') duration = 24;
 
         // Project End
-        const projectEndDate = new Date(projectStartDate);
-        projectEndDate.setMonth(projectEndDate.getMonth() + duration);
+        let projectEndDate; // This will hold the actual end date (deadline or calculated)
+        if (project.deadline) {
+            projectEndDate = new Date(project.deadline);
+        } else {
+            let calculatedEndDate = new Date(projectStartDate);
+            calculatedEndDate.setMonth(calculatedEndDate.getMonth() + duration);
+            projectEndDate = calculatedEndDate;
+        }
 
         // Year Range
         const yearStart = new Date(year.start_date);
         const yearEnd = new Date(year.end_date);
 
-        // Check Overlap
-        return (projectStartDate <= yearEnd) && (projectEndDate >= yearStart);
+        // Standard Check: Overlap
+        const isOverlap = (projectStartDate <= yearEnd) && (projectEndDate >= yearStart);
+        return isOverlap;
+
+        return false;
     };
 
     const contextValue = {
@@ -152,7 +192,7 @@ export const AcademicYearProvider = ({ children }) => {
 
     // STRICT BLOCKING LOGIC
     // If on a protected dashboard AND no year selected (and done loading initial check), BLOCK access.
-    // We wait for 'loading' to finish so we don't flash the popup if localStorage has the year.
+    // All roles including mentees must select a year.
     if (!loading && isProtectedDashboard && !selectedYear) {
         return (
             <AcademicYearContext.Provider value={contextValue}>
@@ -162,8 +202,8 @@ export const AcademicYearProvider = ({ children }) => {
                         years={availableYears}
                         onSelect={handleSelectYear}
                         onAddYear={addNextYear}
-                        isCoordinator={isCoordinator}
-                        onLogout={signOut}
+                        yearToSelect={selectedYear}
+                        isCoordinator={canAddYear}
                     />
                 </div>
             </AcademicYearContext.Provider>

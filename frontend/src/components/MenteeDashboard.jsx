@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useAcademicYear } from '../contexts/AcademicYearContext';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useOfflineSync } from '../contexts/OfflineSyncContext';
-import { FaUpload, FaEye, FaTrash, FaFileAlt, FaClock, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaDownload, FaRegCommentDots, FaCommentDots } from 'react-icons/fa';
+import { FaUpload, FaEye, FaTrash, FaFileAlt, FaClock, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaDownload, FaRegCommentDots, FaCommentDots, FaCalendarAlt } from 'react-icons/fa';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 
 // Define the storage bucket constant
 const STORAGE_BUCKET = 'submissions';
@@ -30,7 +32,14 @@ const MenteeDashboard = () => {
   const [remarkModal, setRemarkModal] = useState({ open: false, submission: null, remark: '' });
   const [demoLinkInput, setDemoLinkInput] = useState('');
   const [savingDemoLink, setSavingDemoLink] = useState(false);
+  // Feedback Link State
+  const [feedbackLink, setFeedbackLink] = useState(null);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+
   const { addToQueue, isOnline, offlineQueue } = useOfflineSync();
+  const { selectedYear, isProjectInYear } = useAcademicYear();
+
 
   // Merge offline queue into displayed submissions
   useEffect(() => {
@@ -86,7 +95,246 @@ const MenteeDashboard = () => {
     if (user && userProfile?.role === 'mentee') {
       fetchProjects();
     }
-  }, [user, userProfile]);
+  }, [user, userProfile, selectedYear]);
+
+  // Realtime subscription for submissions
+  useEffect(() => {
+    if (!user) return;
+
+    const subscription = supabase
+      .channel('mentee_submissions_channel')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'submissions',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          if (payload.new) {
+            console.log('Realtime submission update received:', payload.new);
+
+            // Update local submissions state immediately
+            setSubmissions(prev => {
+              const newSubs = { ...prev };
+              const pId = payload.new.project_id;
+              const sKey = payload.new.stage_key;
+
+              if (newSubs[pId] && newSubs[pId][sKey]) {
+                newSubs[pId] = {
+                  ...newSubs[pId],
+                  [sKey]: { ...newSubs[pId][sKey], ...payload.new }
+                };
+              }
+              return newSubs;
+            });
+
+            // Update modal if open and showing this submission
+            setRemarkModal(prev => {
+              if (prev.open && prev.submission && prev.submission.id === payload.new.id) {
+                return {
+                  ...prev,
+                  submission: { ...prev.submission, ...payload.new },
+                  remark: payload.new.remark || ''
+                };
+              }
+              return prev;
+            });
+
+            // Show toast if a new remark is added
+            if (payload.new.remark && payload.old && !payload.old.remark) {
+              toast('New feedback received from mentor!', {
+                icon: '💬',
+                duration: 4000
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user]);
+
+  // Global Notification Logic Helper
+  const checkForFeedbackUpdate = (updatedAt) => {
+    if (!updatedAt || !user?.id) return;
+
+    const lastSeenKey = `mentee_last_seen_feedback_update_${user.id}`; // User-specific key
+    const lastSeenTime = parseInt(localStorage.getItem(lastSeenKey) || '0', 10);
+    const serverTime = new Date(updatedAt).getTime();
+
+    console.log('[MenteeDashboard] Checking Feedback Update:', { serverTime, lastSeenTime, diff: serverTime - lastSeenTime });
+
+    // If never seen (0), just mark as seen to prevent "first login" popup
+    if (lastSeenTime === 0) {
+      localStorage.setItem(lastSeenKey, serverTime.toString());
+      return;
+    }
+
+    // Trigger ONLY if server time is effectively newer
+    if (serverTime > lastSeenTime) {
+      console.log('Triggering Feedback Notification');
+      toast((t) => (
+        <div className="flex flex-col gap-2">
+          <span className="font-semibold text-slate-800">
+            Coordinator updated feedback form
+          </span>
+          <button
+            onClick={() => {
+              localStorage.setItem(lastSeenKey, serverTime.toString());
+              toast.dismiss(t.id);
+            }}
+            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 self-end"
+          >
+            Dismiss
+          </button>
+        </div>
+      ), {
+        id: 'feedback-update-notification', // Unique ID prevents duplicates
+        duration: Infinity, // Persistent until dismissed
+        position: 'top-center',
+        icon: '🔔',
+        style: {
+          background: '#F8F9FA',
+          border: '1px solid #E2E8F0',
+          padding: '12px',
+        }
+      });
+    }
+  };
+
+  // Fetch feedback link (Year dependent, Coordinator managed)
+  useEffect(() => {
+    const fetchFeedbackLink = async () => {
+      setFeedbackLink(null);
+      // Strictly bound to Academic Year for the LINK itself
+      if (!selectedYear?.id) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('coordinator_feedback_links')
+          .select('link, updated_at')
+          .eq('academic_year_id', selectedYear.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error fetching feedback link:', error);
+          return;
+        }
+
+        if (data?.link) {
+          setFeedbackLink(data.link);
+          checkForFeedbackUpdate(data.updated_at);
+        }
+      } catch (err) {
+        console.error('Error in fetchFeedbackLink:', err);
+      }
+    };
+
+    fetchFeedbackLink();
+  }, [selectedYear]);
+
+  // Realtime subscription for Feedback Updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('feedback_updates_global')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE', // Trigger notification ONLY when coordinator updates
+          schema: 'public',
+          table: 'coordinator_feedback_links'
+        },
+        (payload) => {
+          if (payload.new && payload.new.updated_at) {
+            // Year-agnostic: We simply notify if *any* link updates and it's new to us.
+            // This satisfies "Popup must appear regardless of selected academic year"
+            checkForFeedbackUpdate(payload.new.updated_at);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  // Fetch feedback submission status
+  useEffect(() => {
+    const checkFeedbackStatus = async () => {
+      setFeedbackSubmitted(false);
+      if (!user?.id || !selectedYear?.id) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('mentor_feedback_submissions')
+          .select('id')
+          .eq('mentee_id', user.id)
+          .eq('academic_year_id', selectedYear.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error checking feedback status:', error);
+          return;
+        }
+
+        if (data) {
+          setFeedbackSubmitted(true);
+        }
+      } catch (err) {
+        console.error('Error in checkFeedbackStatus:', err);
+      }
+    };
+
+    checkFeedbackStatus();
+  }, [user, selectedYear]);
+
+  const handleFeedbackSubmit = async () => {
+    if (!user?.id || !selectedYear?.id || !selectedProject) return;
+
+    // Mentor ID from project
+    const mentorId = selectedProject.mentor_id || selectedProject.mentor?.id;
+    if (!mentorId) {
+      toast.error('Cannot verify mentor for this project.');
+      return;
+    }
+
+    try {
+      setSubmittingFeedback(true);
+      const { error } = await supabase
+        .from('mentor_feedback_submissions')
+        .insert({
+          mentee_id: user.id,
+          mentor_id: mentorId,
+          academic_year_id: selectedYear.id,
+          submitted_at: new Date()
+        });
+
+      if (error) {
+        if (error.code === '23505') { // Unique violation
+          toast.success('You have already submitted feedback for this year.');
+          setFeedbackSubmitted(true);
+        } else {
+          throw error;
+        }
+      } else {
+        setFeedbackSubmitted(true);
+        toast.success('Feedback marked as submitted!');
+      }
+    } catch (error) {
+      console.error('Error submitting feedback status:', error);
+      toast.error('Failed to mark as submitted.');
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  };
 
   const initializeDashboard = async () => {
     try {
@@ -168,64 +416,124 @@ const MenteeDashboard = () => {
 
   const fetchProjects = async () => {
     try {
-      if (!user?.id) return;
+      if (!user?.id || !selectedYear) return;
 
-      // First try a simple query to get all projects
-      let { data: projectsData, error } = await supabase
+      // START QUERY BUILDING
+      let query = supabase
         .from('projects')
         .select('*')
-        .limit(100);
+        .or(`created_by.eq.${user.id},mentees.cs.["${user.id}"],mentees.cs.["${user.email}"],assigned_to.eq.mentee,assigned_to.eq.${userProfile?.role}`)
+        .limit(50); // Reduced limit for faster loading
 
-      // If that fails, try with different column names
-      if (error) {
-        const result = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
-        projectsData = result.data;
-        error = result.error;
+      // Filter by visible_sessions if selectedYear is available
+      if (selectedYear && selectedYear.name) {
+        query = query.contains('visible_sessions', [selectedYear.name]);
       }
 
+      let { data: projectsData, error } = await query;
+      // END QUERY BUILDING
+
+      // Fallback: If complex query fails, try simpler approaches
       if (error) {
-        console.error('Error fetching projects:', error);
+        console.warn('Complex project query failed, trying fallback:', error);
+
+        // Fallback 1: Try basic mentee assignment
+        let query1 = supabase
+          .from('projects')
+          .select('*')
+          .or(`created_by.eq.${user.id},mentees.cs.["${user.id}"]`)
+          .limit(50);
+
+        if (selectedYear && selectedYear.name) {
+          query1 = query1.contains('visible_sessions', [selectedYear.name]);
+        }
+
+        const { data: fallbackData1, error: error1 } = await query1;
+
+        if (!error1 && fallbackData1) {
+          projectsData = fallbackData1;
+        } else {
+          // Fallback 2: Try just user's own projects
+          let query2 = supabase
+            .from('projects')
+            .select('*')
+            .eq('created_by', user.id)
+            .limit(50);
+
+          if (selectedYear && selectedYear.name) {
+            query2 = query2.contains('visible_sessions', [selectedYear.name]);
+          }
+
+          const { data: fallbackData2, error: error2 } = await query2;
+
+          if (!error2 && fallbackData2) {
+            projectsData = fallbackData2;
+          } else {
+            // Fallback 3: For development, show some projects
+            if (import.meta.env.DEV) {
+              const { data: devData, error: devError } = await supabase
+                .from('projects')
+                .select('*')
+                .limit(10);
+
+              if (!devError && devData) {
+                projectsData = devData;
+                console.log('Development mode: Showing limited projects for testing');
+              }
+            }
+          }
+        }
+      }
+
+      if (error && !projectsData) {
+        console.error('All project queries failed:', error);
         setProjects([]);
         return;
       }
 
-      // Filter projects based on user assignment
-      // Check multiple ways a user could be assigned to a project
+      // Additional client-side filtering for safety and year filtering
       const filteredProjects = (projectsData || []).filter(project => {
-        // Check if user is in the mentees array
-        if (project.mentees && Array.isArray(project.mentees)) {
-          return project.mentees.includes(user.id);
-        }
+        // Filter by academic year first
+        // Note: Server-side filtering now handles this authoritative check via visible_sessions
+        // We keep isProjectInYear as a backup mainly for dev mode or fallback cases
+        // if (!isProjectInYear(project)) {
+        //   return false;
+        // }
 
-        // Check if user created the project
-        if (project.createdBy === user.id || project.created_by === user.id) {
+        // User created the project
+        if (project.created_by === user.id || project.createdBy === user.id) {
           return true;
         }
 
-        // Check if user is assigned by email in mentees array (if it's an array of emails)
-        if (project.mentees && Array.isArray(project.mentees) && user.email) {
-          return project.mentees.some(mentee =>
-            typeof mentee === 'string' && mentee.toLowerCase() === user.email.toLowerCase()
-          );
+        // User is in mentees array (UUID or email)
+        if (project.mentees && Array.isArray(project.mentees)) {
+          const inMentees = project.mentees.includes(user.id) ||
+            project.mentees.includes(user.email) ||
+            (typeof project.mentees === 'string' &&
+              project.mentees.includes(user.id));
+          if (inMentees) return true;
         }
 
-        // For development, if no projects are found, show all projects
-        // This helps with testing when the mentees array might not be properly set up
-        if (import.meta.env.DEV && (projectsData || []).length <= 3) {
+        // Project assigned to mentees or user's role
+        if (project.assigned_to === 'mentee' ||
+          project.assigned_to === userProfile?.role ||
+          project.assigned_to === user.id) {
+          return true;
+        }
+
+        // Development fallback
+        if (import.meta.env.DEV && (projectsData || []).length <= 5) {
           return true;
         }
 
         return false;
       });
 
+      // Set projects immediately
       setProjects(filteredProjects);
 
-      // Restoration: State Persistence for Project Selection
-      if (filteredProjects.length > 0) {
+      // Initialize project selection if needed
+      if (filteredProjects.length > 0 && !selectedProject) {
         let projectToSelect = filteredProjects[0];
         const savedProjectId = localStorage.getItem('mentee_selected_project_id');
 
@@ -234,18 +542,60 @@ const MenteeDashboard = () => {
           if (found) projectToSelect = found;
         }
 
-        if (!selectedProject || selectedProject.id !== projectToSelect.id) {
-          setSelectedProject(projectToSelect);
-          // Initialize demo link input
-          setDemoLinkInput(projectToSelect.demo_link || '');
-        }
-
-        // Fetch submissions for all projects (or lazy load, but existing logic fetches all)
-        await fetchAllSubmissions(filteredProjects);
+        setSelectedProject(projectToSelect);
+        setDemoLinkInput(projectToSelect.demo_link || '');
       }
+
+      // Fetch submissions in parallel with project data
+      if (filteredProjects.length > 0) {
+        await fetchAllSubmissionsOptimized(filteredProjects);
+      }
+
     } catch (error) {
       console.error('Error fetching projects:', error);
       setProjects([]);
+    }
+  };
+
+  const fetchAllSubmissionsOptimized = async (projectsList) => {
+    try {
+      if (!projectsList || projectsList.length === 0) return;
+
+      // Optimized single query to get all submissions for all projects
+      const projectIds = projectsList.map(p => p.id);
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .in('project_id', projectIds)
+        .eq('user_id', user.id);
+
+      if (error) {
+        if (error.code === '42P01') {
+          // Table doesn't exist, continue without submissions
+          setSubmissions({});
+          return;
+        } else {
+          console.error('Error fetching submissions:', error);
+          setSubmissions({});
+          return;
+        }
+      }
+
+      // Process submissions data efficiently
+      const submissionsData = {};
+      if (data) {
+        data.forEach(submission => {
+          if (!submissionsData[submission.project_id]) {
+            submissionsData[submission.project_id] = {};
+          }
+          submissionsData[submission.project_id][submission.stage_key] = submission;
+        });
+      }
+
+      setSubmissions(submissionsData);
+    } catch (error) {
+      console.error('Error in fetchAllSubmissionsOptimized:', error);
+      setSubmissions({});
     }
   };
 
@@ -259,7 +609,7 @@ const MenteeDashboard = () => {
             .from('submissions')
             .select('*')
             .eq('project_id', project.id)
-            .eq('mentee_id', user.id);
+            .eq('user_id', user.id);
 
           if (error) {
             if (error.code === '42P01') {
@@ -394,7 +744,7 @@ const MenteeDashboard = () => {
         .from('submissions')
         .select('id')
         .eq('project_id', selectedProject.id)
-        .eq('mentee_id', currentUser.id)
+        .eq('user_id', currentUser.id)
         .eq('stage_key', stageKey)
         .maybeSingle();
 
@@ -405,13 +755,12 @@ const MenteeDashboard = () => {
 
       const submissionPayload = {
         project_id: selectedProject.id,
-        mentee_id: currentUser.id,
+        user_id: currentUser.id,
+        user_name: currentUser.user_metadata?.name || currentUser.email?.split('@')[0] || 'User',
+        user_email: currentUser.email,
         stage_key: stageKey,
-        filename: file.name,
         file_url: publicUrl,
-        storage_path: storagePath,
-        status: 'pending',
-        uploaded_at: new Date().toISOString()
+        status: 'pending'
       };
 
       let dbError = null;
@@ -452,8 +801,42 @@ const MenteeDashboard = () => {
         console.error('project_files insert error:', projectFilesError);
       }
 
+      // Update project status based on stage
+      const updateStatus = async (newStatus) => {
+        try {
+          // Try RPC first (bypasses RLS)
+          const { error: rpcError } = await supabase
+            .rpc('update_project_status', {
+              p_project_id: selectedProject.id,
+              p_status: newStatus
+            });
+
+          if (rpcError) {
+            console.warn('RPC update failed, trying direct update...', rpcError);
+            // Fallback to direct update
+            const { error: directError } = await supabase
+              .from('projects')
+              .update({ status: newStatus })
+              .eq('id', selectedProject.id);
+
+            if (directError) throw directError;
+          }
+        } catch (err) {
+          console.error(`Failed to update status to ${newStatus}:`, err);
+          // Only show error if it's not a permission issue we expect might happen
+          // But actually, we want to know why it failed
+          toast.error(`Status update failed: ${err.message || 'Unknown error'}`);
+        }
+      };
+
+      if (stageKey === 'progress1') {
+        await updateStatus('in_progress');
+      } else if (stageKey === 'finalReport') {
+        await updateStatus('completed');
+      }
+
       // Refresh submissions for this project
-      await fetchAllSubmissions([selectedProject]);
+      await fetchAllSubmissionsOptimized([selectedProject]);
       toast.success('Uploaded successfully — visible to your mentor.');
 
     } catch (error) {
@@ -506,9 +889,35 @@ const MenteeDashboard = () => {
         .eq('project_id', selectedProject.id)
         .eq('uploaded_by', user.id)
         .eq('file_url', submissionEntry.file_url);
-
       if (projectFilesDeleteError) {
         console.error('project_files delete error:', projectFilesDeleteError);
+      }
+
+      // Update project status on delete - Strict Reversion Logic
+      const updateStatus = async (newStatus) => {
+        try {
+          const { error: rpcError } = await supabase.rpc('update_project_status', {
+            p_project_id: selectedProject.id,
+            p_status: newStatus
+          });
+          if (rpcError) {
+            console.warn('RPC update failed, trying direct update...', rpcError);
+            const { error: directError } = await supabase.from('projects')
+              .update({ status: newStatus }).eq('id', selectedProject.id);
+            if (directError) throw directError;
+          }
+        } catch (err) {
+          console.error(`Failed to revert status to ${newStatus}:`, err);
+          toast.error(`Status reversion failed: ${err.message}`);
+        }
+      };
+
+      if (stageKey === 'finalReport') {
+        // If Final Report is deleted, revert to In Progress
+        await updateStatus('in_progress');
+      } else if (stageKey === 'progress1') {
+        // If Progress 1 is deleted, revert to Draft (Coordinator Assigned)
+        await updateStatus('draft');
       }
 
       // Refresh submissions
@@ -575,32 +984,47 @@ const MenteeDashboard = () => {
   const handleSaveDemoLink = async () => {
     if (!selectedProject || !user) return;
 
-    // Validation
-    if (demoLinkInput && !demoLinkInput.match(/^https?:\/\/.+/)) {
-      toast.error('Please enter a valid URL starting with http:// or https://');
-      return;
-    }
+
 
     try {
       setSavingDemoLink(true);
-      const { error } = await supabase
+
+      // Format the link: prepend https:// if protocol is missing
+      let formattedLink = demoLinkInput.trim();
+      if (formattedLink && !/^https?:\/\//i.test(formattedLink)) {
+        formattedLink = `https://${formattedLink}`;
+      }
+
+      console.log('Saving demo link for project:', selectedProject.id, 'Original:', demoLinkInput, 'Formatted:', formattedLink);
+
+      const { error, data } = await supabase
         .from('projects')
-        .update({ demo_link: demoLinkInput || null })
-        .eq('id', selectedProject.id);
+        .update({ demo_link: formattedLink || null })
+        .eq('id', selectedProject.id)
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase update error:', error);
+        throw error;
+      }
 
-      // Update local state
-      const updatedProjects = projects.map(p =>
+      console.log('Save result:', data);
+
+      // Update local state for the projects list
+      setProjects(prevProjects => prevProjects.map(p =>
         p.id === selectedProject.id ? { ...p, demo_link: demoLinkInput } : p
-      );
-      setProjects(updatedProjects);
-      setSelectedProject(prev => ({ ...prev, demo_link: demoLinkInput }));
+      ));
+
+      // Update local state for the currently selected project
+      setSelectedProject(prev => {
+        if (!prev) return null;
+        return { ...prev, demo_link: demoLinkInput };
+      });
 
       toast.success('Demo link saved successfully!');
     } catch (error) {
       console.error('Error saving demo link:', error);
-      toast.error('Failed to save demo link');
+      toast.error(`Failed to save demo link: ${error.message || 'Unknown error'}`);
     } finally {
       setSavingDemoLink(false);
     }
@@ -614,9 +1038,7 @@ const MenteeDashboard = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
-  };
+  // formatDate helper removed in favor of formatDateDDMMYYYY utility
 
   const statusBadgeStyles = {
     accepted: 'bg-green-100 text-green-700',
@@ -695,19 +1117,25 @@ const MenteeDashboard = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Mentee Dashboard</h1>
+              <h1 className="text-3xl font-bold text-black">Mentee Dashboard</h1>
               <h2 className="text-2xl font-semibold">
                 <DecryptedText
-                  text={`Welcome back, ${userProfile?.name}`}
+                  text={`Welcome back, ${userProfile?.full_name || userProfile?.name || userProfile?.email?.split('@')[0] || 'User'}`}
                   speed={60}
                   maxIterations={15}
                   sequential={true}
                   revealDirection="start"
                   animateOn="view"
-                  className="text-2xl font-semibold"
+                  className="text-2xl font-semibold text-purple-600"
                   encryptedClassName="opacity-70"
                 />
               </h2>
+              {selectedYear && (
+                <div className="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-medium">
+                  <FaCalendarAlt className="mr-2" />
+                  Academic Year: {selectedYear.name}
+                </div>
+              )}
             </div>
             <div className="flex items-center space-x-3">
               {/* Restoration: Project Selection Dropdown */}
@@ -732,33 +1160,9 @@ const MenteeDashboard = () => {
                 </div>
               )}
 
-              {/* Role Switching Buttons - Only show for non-mentee roles */}
-              {authUserProfile?.roles && authUserProfile.roles.length > 1 &&
-                authUserProfile.roles.some(role => role && role !== 'mentee') && (
-                  <div className="flex space-x-2">
-                    {authUserProfile.roles
-                      .filter(role => role && role !== 'mentee') // Exclude mentee role
-                      .map((role) => (
-                        <button
-                          key={role}
-                          onClick={() => switchToRole(role)}
-                          className={`px-3 py-2 rounded-md text-sm font-medium ${activeRole === role
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                            }`}
-                        >
-                          {role === 'project_coordinator' ? 'Coordinator' : role.charAt(0).toUpperCase() + role.slice(1)}
-                        </button>
-                      ))}
-                  </div>
-                )}
 
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-              >
-                Logout
-              </button>
+
+
             </div>
           </div>
         </div>
@@ -813,35 +1217,36 @@ const MenteeDashboard = () => {
             <p className="text-gray-500">
               {projects.length === 0
                 ? 'You haven\'t been assigned to any projects yet.'
-                : 'Please wait while we load your project dashboard.'}
+                : 'Please wait while we load your project dashboard.'
+              }
             </p>
           </div>
         ) : (
           <>
             {/* Project Info */}
-            <div className="mb-8">
+            <div className="mb-8 relative z-10">
               <div className="bg-white rounded-lg shadow-sm border p-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">{selectedProject.project_name || selectedProject.title || selectedProject.projectName}</h2>
-                <p className="text-gray-600 mb-4">{selectedProject.project_details || selectedProject.description}</p>
+                <h2 className="text-2xl font-bold text-black mb-2">{selectedProject.project_name || selectedProject.title || selectedProject.projectName}</h2>
+                <p className="text-black mb-4">{selectedProject.project_details || selectedProject.description}</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="text-gray-500 text-xs font-medium mb-1">Domain</div>
-                    <div className="text-gray-900 font-medium">{selectedProject.domain || 'Not specified'}</div>
+                    <div className="text-black font-medium">{selectedProject.domain || 'Not specified'}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="text-gray-500 text-xs font-medium mb-1">Mentor</div>
-                    <div className="text-gray-900 font-medium">{selectedProject.mentor?.name || selectedProject.mentor_email || 'Unassigned'}</div>
+                    <div className="text-black font-medium">{selectedProject.mentor?.name || selectedProject.mentor_email || 'Unassigned'}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="text-gray-500 text-xs font-medium mb-1">Project Duration</div>
-                    <div className="text-gray-900 font-medium">
-                      {selectedProject.duration_months || 12} months
+                    <div className="text-black font-medium">
+                      {selectedProject.duration_months || (selectedProject.deadline ? Math.round((new Date(selectedProject.deadline) - new Date(selectedProject.created_at || Date.now())) / (1000 * 60 * 60 * 24 * 30.44)) : 12)} months
                     </div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="text-gray-500 text-xs font-medium mb-1">Deadline</div>
-                    <div className="text-gray-900 font-medium">
-                      {selectedProject.deadline ? new Date(selectedProject.deadline).toLocaleDateString() : 'Not set'}
+                    <div className="text-black font-medium">
+                      {formatDateDDMMYYYY(selectedProject.deadline)}
                     </div>
                   </div>
                 </div>
@@ -861,6 +1266,12 @@ const MenteeDashboard = () => {
                 const acceptAttr = stageConfig.allowedTypes.length > 0 ? stageConfig.allowedTypes.map(type => `.${type}`).join(',') : undefined;
 
                 if (stageConfig.isForm) {
+                  // Case B: Mentor has NOT provided a link -> Render NOTHING
+                  if (!feedbackLink) {
+                    return null;
+                  }
+
+                  // Case A: Mentor HAS provided a link -> Show Open Feedback Form button
                   return (
                     <div
                       key={stageConfig.key}
@@ -874,10 +1285,31 @@ const MenteeDashboard = () => {
                         <span className="text-2xl">{stageConfig.icon}</span>
                       </div>
                       <button
-                        onClick={handleOpenFeedbackForm}
+                        onClick={() => window.open(feedbackLink, '_blank')}
                         className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition"
                       >
-                        <FaUpload /> Open Form
+                        Open Feedback Form
+                      </button>
+
+                      <button
+                        onClick={handleFeedbackSubmit}
+                        disabled={feedbackSubmitted || submittingFeedback}
+                        className={`inline-flex items-center justify-center gap-2 px-4 py-3 font-medium rounded-xl transition ${feedbackSubmitted
+                          ? 'bg-green-100 text-green-700 cursor-default'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                      >
+                        {feedbackSubmitted ? (
+                          <>
+                            <FaCheckCircle /> Submitted
+                          </>
+                        ) : submittingFeedback ? (
+                          <>
+                            <FaSpinner className="animate-spin" /> Marking...
+                          </>
+                        ) : (
+                          'Mark as Submitted'
+                        )}
                       </button>
                     </div>
                   );
@@ -971,7 +1403,7 @@ const MenteeDashboard = () => {
                               {submissionEntry.uploaded_at && (
                                 <p className="text-xs text-blue-700 mt-1 flex items-center gap-1">
                                   <FaClock className="text-blue-400" />
-                                  {formatDate(submissionEntry.uploaded_at)}
+                                  {formatDateDDMMYYYY(submissionEntry.uploaded_at)}
                                 </p>
                               )}
                             </div>
@@ -979,6 +1411,17 @@ const MenteeDashboard = () => {
                               {statusLabel}
                             </span>
                           </div>
+                          {submissionEntry.remark && (
+                            <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <FaRegCommentDots className="text-yellow-600 mt-0.5 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs font-semibold text-yellow-800 mb-1">Mentor's Feedback:</p>
+                                  <p className="text-sm text-yellow-900">{submissionEntry.remark}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap gap-2">
@@ -1027,19 +1470,6 @@ const MenteeDashboard = () => {
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                           >
                             <FaEye /> View
-                          </button>
-                          <button
-                            onClick={() => submissionEntry && handleViewRemark(submissionEntry)}
-                            disabled={!submissionEntry}
-                            className={`relative px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition ${submissionEntry
-                              ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                              : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                              }`}
-                          >
-                            <FaCommentDots /> Remarks
-                            {submissionEntry?.remark && !submissionEntry?.remark_seen && (
-                              <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-600 rounded-full border-2 border-white"></span>
-                            )}
                           </button>
                           <button
                             onClick={() => handleFileDelete(stageConfig.key)}

@@ -45,6 +45,15 @@ function DashboardRedirect() {
 
     let roleToUse = activeRole;
 
+    // If activeRole is null (maybe context refresh), try to recover from localStorage directly
+    if (!roleToUse) {
+      const storedRole = localStorage.getItem('activeRole');
+      if (storedRole) {
+        console.log('Recovering active role from localStorage in Redirect:', storedRole);
+        roleToUse = storedRole;
+      }
+    }
+
     // Validate if activeRole (e.g. from localStorage) is actually valid for this user
     if (roleToUse) {
       const userRoles = new Set([

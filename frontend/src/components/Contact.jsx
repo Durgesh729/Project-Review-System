@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 
 const Contact = () => {
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
@@ -18,60 +20,39 @@ const Contact = () => {
 
   useEffect(() => {
     checkAdminAccess();
-    // Test API connection instead of direct Supabase
-    const testAPIConnection = async () => {
-      try {
-        console.log('Testing API connection...');
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://pms2025-cmk.onrender.com';
-        const response = await axios.get(`${backendUrl}/api/admin/contacts`);
-        if (response.data.success) {
-          console.log('API connection successful');
-        } else {
-          console.error('API connection failed:', response.data.message);
-        }
-      } catch (error) {
-        console.error('API connection error:', error.message);
-      }
-    };
-    testAPIConnection();
-  }, []);
+  }, [user]);
 
   const checkAdminAccess = async () => {
     try {
-      const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-      if (currentUser.role === 'hod' && currentUser.userId) {
+      if (user && (user.role === 'hod' || user.role === 'admin')) {
         setIsAdmin(true);
-        loadContacts(currentUser.userId);
+        loadContacts();
       }
     } catch (error) {
       console.error('Error checking admin access:', error);
     }
   };
 
-  const loadContacts = async (userId) => {
+  const loadContacts = async () => {
     setLoadingContacts(true);
     try {
-      console.log('Loading contacts for admin via API...');
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://pms2025-cmk.onrender.com';
-      const response = await axios.get(`${backendUrl}/api/admin/contacts`);
+      console.log('Loading contacts for admin...');
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      if (response.data.success) {
-        console.log('Contacts loaded successfully via API:', response.data.data?.length || 0);
-        setContacts(response.data.data || []);
-      } else {
-        console.error('API returned error for contacts:', response.data);
-        showToast('error', response.data.message || 'Failed to load contacts');
+      if (error) {
+        console.error('Error loading contacts:', error);
+        showToast('error', 'Failed to load contacts');
         setContacts([]);
+      } else {
+        console.log('Contacts loaded successfully:', data?.length || 0);
+        setContacts(data || []);
       }
     } catch (error) {
-      console.error('Error loading contacts via API:', error);
-      if (error.response) {
-        showToast('error', error.response.data.message || 'Failed to load contacts');
-      } else if (error.request) {
-        showToast('error', 'Network error - please check if the server is running');
-      } else {
-        showToast('error', 'Failed to load contacts');
-      }
+      console.error('Error loading contacts:', error);
+      showToast('error', 'Failed to load contacts');
       setContacts([]);
     } finally {
       setLoadingContacts(false);
@@ -105,36 +86,39 @@ const Contact = () => {
     setSubmitting(true);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://pms2025-cmk.onrender.com';
-      const response = await axios.post(`${backendUrl}/api/contact`, {
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        message: message.trim()
+      // Use the backend API which handles both database insertion and email sending
+      const response = await fetch('http://localhost:5000/api/contact', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          message: message.trim()
+        }),
       });
 
-      if (response.data.success) {
-        console.log('Contact form submitted successfully via API:', response.data);
-        setName('');
-        setEmail('');
-        setMessage('');
-        showToast('success', response.data.message || 'Message sent successfully! We will get back to you soon.');
-        setErrors({});
-      } else {
-        console.error('API returned error:', response.data);
-        showToast('error', response.data.message || 'Failed to send message');
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to send message');
+      }
+
+      console.log('Contact form submitted successfully:', data);
+      setName('');
+      setEmail('');
+      setMessage('');
+      showToast('success', data.message || 'Message sent successfully! We will get back to you soon.');
+      setErrors({});
+
+      // Refresh contacts if admin is viewing
+      if (isAdmin) {
+        loadContacts();
       }
     } catch (error) {
-      console.error('Error submitting contact form via API:', error);
-      if (error.response) {
-        // Server responded with error status
-        showToast('error', error.response.data.message || 'Failed to send message');
-      } else if (error.request) {
-        // Network error
-        showToast('error', 'Network error - please check if the server is running');
-      } else {
-        // Other error
-        showToast('error', 'Failed to send message. Please try again.');
-      }
+      console.error('Error submitting contact form:', error);
+      showToast('error', error.message || 'Failed to send message. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -185,7 +169,7 @@ const Contact = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">Email</h3>
-                  <p className="text-indigo-100">en23172488@git-india.edu.in</p>
+                  <p className="text-indigo-100">gitengineer742@gmail.com</p>
                 </div>
               </div>
 
@@ -372,7 +356,7 @@ const Contact = () => {
                         <p className="text-sm text-indigo-600">{contact.email}</p>
                       </div>
                       <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                        {new Date(contact.created_at).toLocaleDateString()} at {new Date(contact.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatDateDDMMYYYY(contact.created_at)}
                       </span>
                     </div>
                     <div className="bg-gray-50 rounded-lg p-4">

@@ -3,6 +3,13 @@ import { useParams, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './ui/Loader';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
+
+const formatUrl = (url) => {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return `https://${url}`;
+};
 
 const Star = ({ filled, onClick, size = 22 }) => (
   <button type="button" onClick={onClick} className={`focus:outline-none ${onClick ? 'cursor-pointer' : 'cursor-default'}`}>
@@ -20,25 +27,40 @@ const RatingStars = ({ value = 0, onChange, readonly = false }) => (
   </div>
 );
 
-const ReviewItem = ({ r }) => (
+const ReviewItem = ({ r, user, onEdit, onDelete }) => (
   <div className="border rounded-lg p-4 bg-white shadow-sm">
     <div className="flex items-center justify-between">
       <div>
-        <span className="text-sm font-medium text-gray-800">{r.reviewerName || 'Reviewer'}</span>
+        <span className="text-sm font-medium text-gray-800">{r.reviewerName || 'Anonymous User'}</span>
         <p className="text-xs text-gray-400">{r.reviewerEmail ? r.reviewerEmail.replace(/(.{3})(.*)(@.*)/, '$1***$3') : ''}</p>
       </div>
-      <div className="flex items-center">
+      <div className="flex items-center gap-3">
         <RatingStars value={r.rating} readonly />
+        {user && user.id === r.userId && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => onEdit(r)}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => onDelete(r.id)}
+              className="text-red-600 hover:text-red-800 text-sm font-medium"
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </div>
     {r.comment && <p className="mt-2 text-sm text-gray-600">{r.comment}</p>}
-    <p className="mt-2 text-xs text-gray-400">{new Date(r.createdAt).toLocaleString()}</p>
   </div>
 );
 
 const ReviewPage = () => {
   const { id } = useParams();
-  const { user } = useAuth(); // Correctly using AuthContext
+  const { user, userProfile } = useAuth(); // Destructuring userProfile as well
   const [project, setProject] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +71,91 @@ const ReviewPage = () => {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
+
+  // edit/delete state
+  const [editingReview, setEditingReview] = useState(null);
+  const [editRating, setEditRating] = useState(0);
+  const [editComment, setEditComment] = useState('');
+
+  const handleEditReview = (review) => {
+    setEditingReview(review);
+    setEditRating(review.rating);
+    setEditComment(review.comment || '');
+  };
+
+  const handleUpdateReview = async (e) => {
+    e.preventDefault();
+    if (!editingReview || !user) return;
+
+    if (editRating < 1 || editRating > 5) {
+      showToast('error', 'Please select a rating (1-5)');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('reviews')
+        .update({
+          rating: editRating,
+          comment: editComment || ""
+        })
+        .eq('id', editingReview.id)
+        .eq('reviewer_id', user.id);
+
+      if (error) {
+        console.error('Error updating review:', error);
+        showToast('error', 'Failed to update review');
+      } else {
+        showToast('success', 'Review updated successfully!');
+        setEditingReview(null);
+        setEditRating(0);
+        setEditComment('');
+        await fetchAll(); // Refresh reviews
+      }
+    } catch (error) {
+      console.error('Error updating review:', error);
+      showToast('error', 'Failed to update review');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteReview = async (reviewId) => {
+    if (!user) return;
+
+    if (!window.confirm('Are you sure you want to delete this review?')) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('reviews')
+        .delete()
+        .eq('id', reviewId)
+        .eq('reviewer_id', user.id);
+
+      if (error) {
+        console.error('Error deleting review:', error);
+        showToast('error', 'Failed to delete review');
+      } else {
+        showToast('success', 'Review deleted successfully!');
+        await fetchAll(); // Refresh reviews
+      }
+    } catch (error) {
+      console.error('Error deleting review:', error);
+      showToast('error', 'Failed to delete review');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingReview(null);
+    setEditRating(0);
+    setEditComment('');
+  };
 
   const showToast = (type, message) => {
     setToast({ type, message });
@@ -81,7 +188,13 @@ const ReviewPage = () => {
       // Fetch reviews - Simple query first to ensure we get data
       const { data: reviewsData, error: reviewsError } = await supabase
         .from('reviews')
-        .select('*')
+        .select(`
+          *,
+          users!reviews_reviewer_id_fkey (
+            full_name,
+            email
+          )
+        `)
         .eq('project_id', id)
         .order('created_at', { ascending: false });
 
@@ -94,31 +207,17 @@ const ReviewPage = () => {
           setReviews([]);
         }
       } else {
-        // Fetch user profiles separately to avoid JOIN issues
-        const userIds = [...new Set(reviewsData.map(r => r.user_id))];
-        let usersMap = {};
-
-        if (userIds.length > 0) {
-          const { data: usersData, error: usersError } = await supabase
-            .from('users')
-            .select('id, name, email')
-            .in('id', userIds);
-
-          if (!usersError && usersData) {
-            usersData.forEach(u => { usersMap[u.id] = u; });
-          }
-        }
-
+        // Format reviews with user data from the join
         const formattedReviews = reviewsData.map(r => ({
           id: r.id,
           projectId: r.project_id,
-          userId: r.user_id,
+          userId: r.reviewer_id,
           rating: r.rating,
           comment: r.comment,
           createdAt: r.created_at,
-          // Prefer profile name, fall back to email stored in review, then Anon
-          reviewerName: usersMap[r.user_id]?.name || r.user_email?.split('@')[0] || 'User',
-          reviewerEmail: usersMap[r.user_id]?.email || r.user_email
+          // Use user data from the join, fall back to defaults
+          reviewerName: r.users?.full_name || 'User',
+          reviewerEmail: r.users?.email || ''
         }));
         setReviews(formattedReviews);
       }
@@ -161,7 +260,7 @@ const ReviewPage = () => {
         .from('reviews')
         .select('id')
         .eq('project_id', id)
-        .eq('user_id', user.id)
+        .eq('reviewer_id', user.id)
         .maybeSingle();
 
       // Create table check implicit in error handling
@@ -183,11 +282,9 @@ const ReviewPage = () => {
       // Insert review
       const reviewPayload = {
         project_id: id,
-        user_id: user.id,
-        user_email: user.email,
+        reviewer_id: user.id,
         rating: rating,
         comment: comment || "",
-        created_at: new Date().toISOString(),
       };
 
       const { data: reviewData, error: insertError } = await supabase
@@ -209,22 +306,8 @@ const ReviewPage = () => {
         return;
       }
 
-      // Update project's average rating 
-      const { data: allReviews, error: fetchReviewsError } = await supabase
-        .from('reviews')
-        .select('rating')
-        .eq('project_id', id);
-
-      if (!fetchReviewsError && allReviews) {
-        const totalRating = allReviews.reduce((sum, r) => sum + r.rating, 0);
-        const avgRating = totalRating / allReviews.length;
-        const ratingsCount = allReviews.length;
-
-        await supabase
-          .from('projects')
-          .update({ avgRating, ratingsCount })
-          .eq('id', id);
-      }
+      // Note: project stats (avg_rating, ratings_count) are now updated automatically 
+      // via database triggers on the 'reviews' table.
 
       setRating(0);
       setComment('');
@@ -287,7 +370,7 @@ const ReviewPage = () => {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 mb-8">
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-gray-900 mb-3">{project.project_name || project.title || project.projectName}</h1>
+              <h1 className="text-3xl font-bold text-gray-900 mb-3">{project.title || project.project_name || project.projectName}</h1>
 
               <div className="flex flex-wrap gap-2 mb-5">
                 {project.domain && <span className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-sm font-medium border border-indigo-100">{project.domain}</span>}
@@ -300,7 +383,7 @@ const ReviewPage = () => {
                 {(project.mentor?.name || project.mentor_email || project.mentorEmail) && (
                   <div className="flex items-center text-gray-600">
                     <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                    <span className="text-sm"><span className="font-semibold text-gray-800">Mentor:</span> {project.mentor?.name || project.mentor_email || project.mentorEmail}</span>
+                    <span className="text-sm"><span className="font-semibold text-gray-800">Mentor:</span> {project.mentor?.full_name || project.mentor_name || project.mentor_email || project.mentorEmail}</span>
                   </div>
                 )}
                 <div className="flex items-center text-gray-600">
@@ -308,7 +391,7 @@ const ReviewPage = () => {
                   <span className="text-sm">
                     <span className="font-semibold text-gray-800">Demo Link: </span>
                     {project.demo_link ? (
-                      <a href={project.demo_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline">
+                      <a href={formatUrl(project.demo_link)} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline">
                         {project.demo_link}
                       </a>
                     ) : (
@@ -316,12 +399,6 @@ const ReviewPage = () => {
                     )}
                   </span>
                 </div>
-                {project.deadline && (
-                  <div className="flex items-center text-gray-600">
-                    <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                    <span className="text-sm"><span className="font-semibold text-gray-800">Deadline:</span> {new Date(project.deadline).toLocaleDateString()}</span>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -380,7 +457,7 @@ const ReviewPage = () => {
                   <p className="text-sm text-gray-500">Be the first to share your experience with this project!</p>
                 </div>
               ) : (
-                reviews.map(r => <ReviewItem key={r.id} r={r} />)
+                reviews.map(r => <ReviewItem key={r.id} r={r} user={user} onEdit={handleEditReview} onDelete={handleDeleteReview} />)
               )}
             </div>
           </div>
@@ -433,6 +510,53 @@ const ReviewPage = () => {
             </div>
           </div>
         </div>
+
+        {/* Edit Review Modal */}
+        {editingReview && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full">
+              <h3 className="text-xl font-bold text-gray-900 mb-4">Edit Your Review</h3>
+
+              <form onSubmit={handleUpdateReview} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Rating</label>
+                  <div className="flex justify-center p-4 bg-gray-50 rounded-xl border border-gray-100">
+                    <RatingStars value={editRating} onChange={setEditRating} size={28} />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Comment</label>
+                  <textarea
+                    rows={4}
+                    value={editComment}
+                    onChange={e => setEditComment(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow bg-gray-50 focus:bg-white resize-none text-sm"
+                    placeholder="Update your thoughts on the project..."
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={cancelEdit}
+                    disabled={submitting}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60 transition-all"
+                  >
+                    {submitting ? 'Updating...' : 'Update Review'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

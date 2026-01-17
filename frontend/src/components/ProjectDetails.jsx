@@ -5,6 +5,13 @@ import { FaArrowLeft, FaCalendar, FaGithub, FaUser, FaUsers, FaProjectDiagram, F
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './ui/Loader';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
+
+const formatUrl = (url) => {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return `https://${url}`;
+};
 
 const Badge = ({ children }) => (
   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
@@ -127,10 +134,7 @@ const ProjectDetails = () => {
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Not set';
-    return new Date(dateString).toLocaleDateString();
-  };
+  // formatDate helper removed in favor of formatDateDDMMYYYY utility
 
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
@@ -190,7 +194,7 @@ const ProjectDetails = () => {
           >
             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between">
               <div className="flex-1">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-2">
                   <h1 className="text-3xl font-bold text-gray-900">{project.title}</h1>
                   {canEdit() && (
                     <button className="inline-flex items-center px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors">
@@ -198,6 +202,11 @@ const ProjectDetails = () => {
                       Edit
                     </button>
                   )}
+                </div>
+
+                <div className="flex items-center gap-4 mb-4">
+                  <StarRow value={project.avg_rating || 0} />
+                  <span className="text-sm text-gray-500">({project.ratings_count || 0} reviews)</span>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4 mb-6">
@@ -227,12 +236,29 @@ const ProjectDetails = () => {
                     </div>
                   )}
 
-                  {project.deadline && (
+                  {project.deadline && (userProfile?.role === 'hod' || userProfile?.role === 'project_coordinator') && (
                     <div className="flex items-center text-sm text-gray-600">
                       <FaCalendar className="mr-2" />
                       <div>
                         <p className="font-medium">Deadline</p>
-                        <p>{formatDate(project.deadline)}</p>
+                        <p>{formatDateDDMMYYYY(project.deadline)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {project.demo_link && (
+                    <div className="flex items-center text-sm text-gray-600">
+                      <FaProjectDiagram className="mr-2" />
+                      <div>
+                        <p className="font-medium">Demo Link</p>
+                        <a
+                          href={formatUrl(project.demo_link)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          View Demo
+                        </a>
                       </div>
                     </div>
                   )}
@@ -243,7 +269,7 @@ const ProjectDetails = () => {
                       <div>
                         <p className="font-medium">Repository</p>
                         <a
-                          href={project.github_repo}
+                          href={formatUrl(project.github_repo)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:text-blue-800"
@@ -303,8 +329,12 @@ const ProjectDetails = () => {
                       <p className="text-2xl font-bold text-purple-900">{projectFiles.length}</p>
                     </div>
                     <div className="bg-yellow-50 p-4 rounded-lg">
-                      <p className="text-yellow-600 text-sm font-medium">Status</p>
-                      <p className="text-lg font-bold text-yellow-900 capitalize">{project.status}</p>
+                      <p className="text-yellow-600 text-sm font-medium">Avg Rating</p>
+                      <p className="text-2xl font-bold text-yellow-900">{Number(project.avg_rating || 0).toFixed(1)}/5.0</p>
+                    </div>
+                    <div className="bg-orange-50 p-4 rounded-lg">
+                      <p className="text-orange-600 text-sm font-medium">Reviews</p>
+                      <p className="text-2xl font-bold text-orange-900">{project.ratings_count || 0}</p>
                     </div>
                   </div>
                 </div>
@@ -374,7 +404,7 @@ const ProjectDetails = () => {
                           <div>
                             <h4 className="font-semibold text-gray-900">{update.title}</h4>
                             <p className="text-sm text-gray-600">
-                              by {update.users?.name} • {formatDate(update.created_at)}
+                              by {update.users?.name} • {formatDateDDMMYYYY(update.created_at)}
                             </p>
                           </div>
                           <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
@@ -417,7 +447,7 @@ const ProjectDetails = () => {
                           <div>
                             <p className="font-medium text-gray-900">{file.file_name}</p>
                             <p className="text-sm text-gray-600">
-                              Uploaded by {file.users?.name} • {formatDate(file.created_at)}
+                              Uploaded by {file.users?.name} • {formatDateDDMMYYYY(file.created_at)}
                             </p>
                           </div>
                         </div>

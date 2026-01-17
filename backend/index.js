@@ -15,12 +15,14 @@ const authRoutes = require("./routes/authRoutes");
 const projectRoutes = require("./routes/projectRoutes");
 const hodRoutes = require("./routes/hodRoutes");
 const mentorRoutes = require("./routes/mentorRoutes");
+const deleteAccountRoutes = require("./routes/deleteAccountRoutes");
 
 // Apply routes
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/mentors", mentorRoutes);
 app.use("/api/hod", hodRoutes);
+app.use("/api/auth", deleteAccountRoutes);
 
 // Connect to MongoDB (no deprecated options needed anymore 🚀)
 Supabase.connect(SUPABASE_URL)

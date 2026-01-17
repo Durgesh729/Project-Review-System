@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { FaUpload, FaEye, FaTrash, FaFileAlt, FaClock, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaDownload } from 'react-icons/fa';
+import { formatDateDDMMYYYY } from '../utils/dateUtils';
 
 // Define the storage bucket constant
 const STORAGE_BUCKET = 'submissions';
@@ -90,16 +91,16 @@ const MenteeDashboard = () => {
 
       // Check if user has access to mentee dashboard (either as primary role or in roles array)
       // Also check if this is their active role
-      const hasMenteeAccess = userData.role === 'mentee' || 
-                             (userData.roles && userData.roles.includes('mentee'));
-      
+      const hasMenteeAccess = userData.role === 'mentee' ||
+        (userData.roles && userData.roles.includes('mentee'));
+
       const isActiveRoleMentee = (activeRole || userData.role) === 'mentee';
-      
+
       if (!hasMenteeAccess || !isActiveRoleMentee) {
         // Redirect to appropriate dashboard based on active role
         const currentActiveRole = activeRole || userData.role;
         let redirectPath = '/';
-        
+
         switch (currentActiveRole) {
           case 'mentee':
             redirectPath = '/components/dashboard/mentee';
@@ -116,7 +117,7 @@ const MenteeDashboard = () => {
           default:
             redirectPath = '/';
         }
-        
+
         navigate(redirectPath);
         return;
       }
@@ -171,26 +172,26 @@ const MenteeDashboard = () => {
         if (project.mentees && Array.isArray(project.mentees)) {
           return project.mentees.includes(user.id);
         }
-        
+
         // Check if user created the project
         if (project.createdBy === user.id || project.created_by === user.id) {
           return true;
         }
-        
+
         // Check if user is assigned by email in mentees array (if it's an array of emails)
         if (project.mentees && Array.isArray(project.mentees) && user.email) {
-          return project.mentees.some(mentee => 
+          return project.mentees.some(mentee =>
             typeof mentee === 'string' && mentee.toLowerCase() === user.email.toLowerCase()
           );
         }
-        
+
         // For development, if no projects are found, show all projects
         // This helps with testing when the mentees array might not be properly set up
         if (import.meta.env.DEV && (projectsData || []).length <= 3) {
           console.log('Development mode: showing all projects for testing');
           return true;
         }
-        
+
         return false;
       });
 
@@ -265,7 +266,7 @@ const MenteeDashboard = () => {
       setError('Please select a project first');
       return;
     }
-    
+
     try {
       setUploading(prev => ({ ...prev, [stageKey]: true }));
       setError(null);
@@ -296,14 +297,14 @@ const MenteeDashboard = () => {
 
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from(STORAGE_BUCKET)
-        .upload(storagePath, file, { 
+        .upload(storagePath, file, {
           upsert: true,
           cacheControl: '3600'
         });
 
       if (uploadError) {
         console.error('Upload error:', uploadError);
-        
+
         if (uploadError.message.includes('Bucket not found') || uploadError.message.includes('not found')) {
           setError('Storage bucket not configured. Please contact administrator.');
           toast.error('File upload not available - storage not configured.');
@@ -469,9 +470,7 @@ const MenteeDashboard = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
-  };
+  // formatDate helper removed in favor of formatDateDDMMYYYY utility
 
   const statusBadgeStyles = {
     accepted: 'bg-green-100 text-green-700',
@@ -497,7 +496,7 @@ const MenteeDashboard = () => {
       };
       const dashboardPath = dashboardPaths[newRole] || dashboardPaths.mentee;
       console.log(`Switching to role: ${newRole}, navigating to: ${dashboardPath}`);
-      
+
       // Force a small delay to ensure state updates before navigation
       setTimeout(() => {
         navigate(dashboardPath, { replace: true });
@@ -552,29 +551,28 @@ const MenteeDashboard = () => {
               >
                 {showAddProjectForm ? 'Cancel' : 'Add Project'}
               </button>
-              
+
               {/* Role Switching Buttons - Only show for non-mentee roles */}
-              {authUserProfile?.roles && authUserProfile.roles.length > 1 && 
-               authUserProfile.roles.some(role => role && role !== 'mentee') && (
-                <div className="flex space-x-2">
-                  {authUserProfile.roles
-                    .filter(role => role && role !== 'mentee') // Exclude mentee role
-                    .map((role) => (
-                      <button
-                        key={role}
-                        onClick={() => switchToRole(role)}
-                        className={`px-3 py-2 rounded-md text-sm font-medium ${
-                          activeRole === role
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {role === 'project_coordinator' ? 'Coordinator' : role.charAt(0).toUpperCase() + role.slice(1)}
-                      </button>
-                    ))}
-                </div>
-              )}
-              
+              {authUserProfile?.roles && authUserProfile.roles.length > 1 &&
+                authUserProfile.roles.some(role => role && role !== 'mentee') && (
+                  <div className="flex space-x-2">
+                    {authUserProfile.roles
+                      .filter(role => role && role !== 'mentee') // Exclude mentee role
+                      .map((role) => (
+                        <button
+                          key={role}
+                          onClick={() => switchToRole(role)}
+                          className={`px-3 py-2 rounded-md text-sm font-medium ${activeRole === role
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                          {role === 'project_coordinator' ? 'Coordinator' : role.charAt(0).toUpperCase() + role.slice(1)}
+                        </button>
+                      ))}
+                  </div>
+                )}
+
               <button
                 onClick={handleLogout}
                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
@@ -598,7 +596,7 @@ const MenteeDashboard = () => {
                 <p className="text-sm text-red-700">{error}</p>
                 {error.includes('Storage bucket not configured') && (
                   <p className="text-xs text-red-600 mt-1">
-                    The submissions storage bucket needs to be created in Supabase. 
+                    The submissions storage bucket needs to be created in Supabase.
                     Contact your administrator or run the setup scripts.
                   </p>
                 )}
@@ -653,7 +651,7 @@ const MenteeDashboard = () => {
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="text-gray-500 text-xs font-medium mb-1">Deadline</div>
                     <div className="text-gray-900 font-medium">
-                      {selectedProject.deadline ? new Date(selectedProject.deadline).toLocaleDateString() : 'Not set'}
+                      {formatDateDDMMYYYY(selectedProject.deadline)}
                     </div>
                   </div>
                 </div>
@@ -698,9 +696,8 @@ const MenteeDashboard = () => {
                 return (
                   <div
                     key={stageConfig.key}
-                    className={`bg-white border rounded-2xl shadow-sm p-6 flex flex-col gap-4 transition ${
-                      submissionEntry ? 'border-blue-300 shadow-md' : 'border-slate-200'
-                    }`}
+                    className={`bg-white border rounded-2xl shadow-sm p-6 flex flex-col gap-4 transition ${submissionEntry ? 'border-blue-300 shadow-md' : 'border-slate-200'
+                      }`}
                   >
                     <div className="flex items-start justify-between">
                       <div>
@@ -721,7 +718,7 @@ const MenteeDashboard = () => {
                               {submissionEntry.uploaded_at && (
                                 <p className="text-xs text-blue-700 mt-1 flex items-center gap-1">
                                   <FaClock className="text-blue-400" />
-                                  {formatDate(submissionEntry.uploaded_at)}
+                                  {formatDateDDMMYYYY(submissionEntry.uploaded_at)}
                                 </p>
                               )}
                             </div>
@@ -735,21 +732,21 @@ const MenteeDashboard = () => {
                           <button
                             onClick={async () => {
                               if (!submissionEntry) return;
-                              
+
                               try {
                                 console.log('Attempting to view file:', submissionEntry);
-                                
+
                                 // For private storage, we need to get a signed URL
                                 let viewUrl = submissionEntry.file_url;
-                                
+
                                 // If we have a storage_path, try to get a signed URL
                                 if (submissionEntry.storage_path) {
                                   console.log('Getting signed URL for:', submissionEntry.storage_path);
-                                  
+
                                   const { data, error } = await supabase.storage
                                     .from(STORAGE_BUCKET)
                                     .createSignedUrl(submissionEntry.storage_path, 3600); // 1 hour expiry
-                                  
+
                                   if (error) {
                                     console.error('Error creating signed URL:', error);
                                     // Fallback to public URL
@@ -762,7 +759,7 @@ const MenteeDashboard = () => {
                                     console.log('Got signed URL:', viewUrl);
                                   }
                                 }
-                                
+
                                 // Open the file in a new tab
                                 if (viewUrl) {
                                   const newWindow = window.open(viewUrl, '_blank');
@@ -786,20 +783,20 @@ const MenteeDashboard = () => {
                           <button
                             onClick={async () => {
                               if (!submissionEntry) return;
-                              
+
                               try {
                                 console.log('Attempting to download file:', submissionEntry);
-                                
+
                                 let downloadUrl = submissionEntry.file_url;
-                                
+
                                 // For private storage, get a signed URL for download
                                 if (submissionEntry.storage_path) {
                                   console.log('Getting signed URL for download:', submissionEntry.storage_path);
-                                  
+
                                   const { data, error } = await supabase.storage
                                     .from(STORAGE_BUCKET)
                                     .createSignedUrl(submissionEntry.storage_path, 3600); // 1 hour expiry
-                                  
+
                                   if (error) {
                                     console.error('Error creating signed URL for download:', error);
                                     // Fallback to public URL
@@ -812,7 +809,7 @@ const MenteeDashboard = () => {
                                     console.log('Got signed URL for download:', downloadUrl);
                                   }
                                 }
-                                
+
                                 // Create download link
                                 const link = document.createElement('a');
                                 link.href = downloadUrl;
@@ -821,7 +818,7 @@ const MenteeDashboard = () => {
                                 document.body.appendChild(link);
                                 link.click();
                                 document.body.removeChild(link);
-                                
+
                                 toast.success('Download started...');
                               } catch (error) {
                                 console.error('Error downloading file:', error);

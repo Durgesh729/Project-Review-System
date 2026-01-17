@@ -1,5 +1,6 @@
 import React from 'react'
 import { useProjects } from '../hooks/useProjects'
+import { formatDateDDMMYYYY } from '../utils/dateUtils'
 
 const ProjectsTable = () => {
   const { projects, loading, error } = useProjects()
@@ -27,7 +28,7 @@ const ProjectsTable = () => {
                 <td className="font-semibold">{project.title}</td>
                 <td>{project.domain}</td>
                 <td>{project.mentorName}</td>
-                <td>{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'Not set'}</td>
+                <td>{formatDateDDMMYYYY(project.deadline)}</td>
                 <td>
                   <span className={`badge ${project.status === 'completed' ? 'badge-success' : project.status === 'in_progress' ? 'badge-warning' : 'badge-info'}`}>
                     {project.status}

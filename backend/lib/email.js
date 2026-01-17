@@ -8,7 +8,7 @@ const createTransporter = () => {
     secure: process.env.EMAIL_SECURE === 'true' || false,
     user: process.env.EMAIL_USER || 'en23172488@git-india.edu.in'
   });
-  
+
   // Configuration for Gmail with App Password
   const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
@@ -31,16 +31,16 @@ const sendContactEmail = async (contactData) => {
   try {
     console.log('Attempting to send contact email with data:', contactData);
     const transporter = createTransporter();
-    
+
     // Verify transporter configuration
     console.log('Verifying transporter...');
     await transporter.verify();
     console.log('Transporter verified successfully');
-    
+
     // Email to admin (site owner) - Professional Template
     const adminMailOptions = {
       from: process.env.EMAIL_FROM || '"Project Review Platform" <en23172488@git-india.edu.in>',
-      to: process.env.ADMIN_EMAIL || 'en23172488@git-india.edu.in',
+      to: process.env.ADMIN_EMAIL || 'gitengineer742@gmail.com',
       subject: `New Contact Form Submission - ${contactData.name}`,
       html: `
         <!DOCTYPE html>
@@ -146,11 +146,11 @@ const sendContactEmail = async (contactData) => {
     // Send emails
     const adminResult = await transporter.sendMail(adminMailOptions);
     console.log('Admin email sent successfully, message ID:', adminResult.messageId);
-    
+
     console.log('Sending user confirmation email to:', userMailOptions.to);
     const userResult = await transporter.sendMail(userMailOptions);
     console.log('User confirmation email sent successfully, message ID:', userResult.messageId);
-    
+
     console.log('Contact emails sent successfully');
     return { adminResult, userResult };
   } catch (error) {

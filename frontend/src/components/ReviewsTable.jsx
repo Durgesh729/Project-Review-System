@@ -1,5 +1,6 @@
 import React from 'react'
 import { useReviews } from '../hooks/useReviews'
+import { formatDateDDMMYYYY } from '../utils/dateUtils'
 
 const ReviewsTable = () => {
   const { reviews, loading, error } = useReviews()
@@ -31,7 +32,7 @@ const ReviewsTable = () => {
                   </div>
                 </td>
                 <td className="max-w-xs truncate">{review.comment || 'No comment'}</td>
-                <td>{new Date(review.created_at).toLocaleDateString()}</td>
+                <td>{formatDateDDMMYYYY(review.created_at)}</td>
               </tr>
             ))}
           </tbody>

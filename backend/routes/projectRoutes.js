@@ -18,6 +18,7 @@ router.post("/projects", async (req, res) => {
       teamMembers = [],
       mentorName = "",
       mentorEmail = "",
+      assignedSemester = 1, // Default to 1 if not provided
     } = req.body;
 
     if (!title) {
@@ -27,8 +28,8 @@ router.post("/projects", async (req, res) => {
     const supabase = getSupabase(req);
     const normalizedTeam = Array.isArray(teamMembers) && teamMembers.length > 0
       ? teamMembers
-          .filter((tm) => tm && (tm.name || tm.role))
-          .map((tm) => ({ name: tm.name || "Team Member", role: tm.role || "Developer" }))
+        .filter((tm) => tm && (tm.name || tm.role))
+        .map((tm) => ({ name: tm.name || "Team Member", role: tm.role || "Developer" }))
       : [{ name: "Team Member", role: "Developer" }];
 
     // Find mentor if email provided
@@ -60,7 +61,9 @@ router.post("/projects", async (req, res) => {
         avg_rating: 0,
         ratings_count: 0,
         status: "draft",
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        assigned_at: new Date().toISOString(),
+        assigned_semester: Number(assignedSemester) || 1
       }])
       .select()
       .single();
@@ -85,7 +88,7 @@ router.get("/projects/by-mentee/:menteeEmail", async (req, res) => {
       .from("projects")
       .select("*")
       .eq("mentee_email", req.params.menteeEmail);
-    
+
     if (error) {
       return res.status(500).json({ success: false, message: "Server error" });
     }
@@ -99,22 +102,26 @@ router.get("/projects/by-mentee/:menteeEmail", async (req, res) => {
 router.get("/projects", async (req, res) => {
   try {
     const supabase = getSupabase(req);
-    const { search } = req.query;
-    
+    const { search, session } = req.query;
+
     let query = supabase.from("projects").select("*");
-    
+
     if (search && String(search).trim()) {
       const term = String(search).trim();
       query = query.or(`title.ilike.%${term}%,domain.ilike.%${term}%`);
     }
-    
+
+    if (session && String(session).trim()) {
+      query = query.contains("visible_sessions", [String(session).trim()]);
+    }
+
     const { data: projects, error } = await query.order("created_at", { ascending: false });
-    
+
     if (error) {
       console.error("Error fetching projects:", error);
       return res.status(500).json({ success: false, message: "Failed to fetch projects" });
     }
-    
+
     res.json({ success: true, data: projects || [] });
   } catch (err) {
     console.error("Error fetching projects:", err);
@@ -131,7 +138,7 @@ router.get("/projects/:id", async (req, res) => {
       .select("*")
       .eq("id", req.params.id)
       .single();
-    
+
     if (error || !project) {
       return res.status(404).json({ success: false, message: "Project not found" });
     }
@@ -150,7 +157,7 @@ router.get("/projects/:id/detail", async (req, res) => {
       .select("*")
       .eq("id", req.params.id)
       .single();
-    
+
     if (error || !project) {
       return res.status(404).json({ success: false, message: "Project not found" });
     }
@@ -169,7 +176,7 @@ router.get("/projects/:id/reviews", async (req, res) => {
       .select("*")
       .eq("project_id", req.params.id)
       .order("created_at", { ascending: false });
-    
+
     if (error) {
       console.error("Error fetching reviews:", error);
       return res.status(500).json({ success: false, message: "Failed to fetch reviews" });
@@ -194,7 +201,7 @@ router.post("/projects/:id/reviews", async (req, res) => {
       .select("*")
       .eq("id", req.params.id)
       .single();
-    
+
     if (projectError || !project) {
       return res.status(404).json({ success: false, message: "Project not found" });
     }
@@ -211,7 +218,7 @@ router.post("/projects/:id/reviews", async (req, res) => {
       }])
       .select()
       .single();
-    
+
     if (reviewError) {
       console.error("Create review error:", reviewError);
       return res.status(500).json({ success: false, message: "Failed to create review" });
@@ -221,7 +228,7 @@ router.post("/projects/:id/reviews", async (req, res) => {
     const total = project.avg_rating * project.ratings_count + rating;
     const count = project.ratings_count + 1;
     const avgRating = Number((total / count).toFixed(2));
-    
+
     await supabase
       .from("projects")
       .update({ avg_rating: avgRating, ratings_count: count })
@@ -239,14 +246,14 @@ router.get("/reviews", async (req, res) => {
   try {
     const { projectId } = req.query;
     if (!projectId) return res.status(400).json({ success: false, message: "projectId is required" });
-    
+
     const supabase = getSupabase(req);
     const { data: reviews, error } = await supabase
       .from("reviews")
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
-    
+
     if (error) {
       console.error("Error fetching reviews:", error);
       return res.status(500).json({ success: false, message: "Failed to fetch reviews" });
@@ -264,14 +271,14 @@ router.post("/reviews", async (req, res) => {
     if (!rating || rating < 1 || rating > 5) {
       return res.status(400).json({ success: false, message: "Rating must be between 1 and 5" });
     }
-    
+
     const supabase = getSupabase(req);
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("*")
       .eq("id", projectId)
       .single();
-    
+
     if (projectError || !project) {
       return res.status(404).json({ success: false, message: "Project not found" });
     }
@@ -288,7 +295,7 @@ router.post("/reviews", async (req, res) => {
       }])
       .select()
       .single();
-    
+
     if (reviewError) {
       console.error("Create review error:", reviewError);
       return res.status(500).json({ success: false, message: "Failed to create review" });
@@ -298,7 +305,7 @@ router.post("/reviews", async (req, res) => {
     const total = project.avg_rating * project.ratings_count + rating;
     const count = project.ratings_count + 1;
     const avgRating = Number((total / count).toFixed(2));
-    
+
     await supabase
       .from("projects")
       .update({ avg_rating: avgRating, ratings_count: count })
@@ -317,7 +324,7 @@ router.post("/contacts", async (req, res) => {
     if (!name || !email || !message) {
       return res.status(400).json({ success: false, message: "name, email and message are required" });
     }
-    
+
     const supabase = getSupabase(req);
     const { data: doc, error } = await supabase
       .from("contacts")
@@ -330,7 +337,7 @@ router.post("/contacts", async (req, res) => {
       }])
       .select()
       .single();
-    
+
     if (error) {
       console.error("Create contact error:", error);
       return res.status(500).json({ success: false, message: "Failed to store contact" });
