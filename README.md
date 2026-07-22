@@ -3,7 +3,9 @@
 # Smart College Project Management System
 
 <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=24&duration=3000&pause=1200&color=58A6FF&center=true&vCenter=true&width=900&lines=Modern+Academic+Project+Management+Platform;Role-Based+Dashboard+Architecture;Academic-Year+Driven+Project+Lifecycle;Built+for+Scalability+%26+Real-World+Workflows" />
-
+<p align="center">
+<img width="500" src="https://media.giphy.com/media/L8K62iTDkzGX6/giphy.gif">
+</p>
 <br>
 
 <img src="https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white"/>
