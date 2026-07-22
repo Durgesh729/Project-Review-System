@@ -128,31 +128,23 @@ This ensures:
 
 ---
 
-## Project Workflow
+```mermaid
+flowchart TD
 
-```text
-Project Creation
-        │
-        ▼
-Mentor Assignment
-        │
-        ▼
-Mentee Allocation
-        │
-        ▼
-Project Proposal
-        │
-        ▼
-Document Submission
-        │
-        ▼
-Mentor Review
-        │
-        ▼
-Evaluation
-        │
-        ▼
-Project Completion
+A[Project Created]
+B[Mentor Assigned]
+C[Mentees Allocated]
+D[Proposal Submitted]
+E[Progress Tracking]
+F[Evaluation]
+G[Project Completed]
+
+A --> B
+B --> C
+C --> D
+D --> E
+E --> F
+F --> G
 ```
 
 ---
