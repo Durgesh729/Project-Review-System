@@ -31,7 +31,11 @@ The architecture is designed around an **Academic-Year Driven Model**, ensuring 
 ---
 
 ## Core Features
+<p align="center">
 
+<img src="https://skillicons.dev/icons?i=supabase,postgres,firebase,git,github,vscode&perline=8"/>
+
+</p>
 <table>
 <tr>
 <td width="50%">
